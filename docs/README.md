@@ -10,6 +10,7 @@
 | `field_formats.md` | 각 schema 필드의 타입, 단위, 범위, 예시 |
 | `situation_tags.md` | observed 기반 situation tag 정의 |
 | `attack_mapping.md` | 공격 3종과 schema/tag/방어 매핑 |
+| `encrypted_channel_attack_ai.md` | 암호화 통신 환경에서 Red AI가 공격 방법을 선택하는 설계 |
 
 읽는 순서:
 
@@ -20,6 +21,7 @@ reference_sources.md
 → field_formats.md
 → situation_tags.md
 → attack_mapping.md
+→ encrypted_channel_attack_ai.md
 ```
 
 보고서에 넣을 때는 `world_observed_model.md`의 정의 문장, `schema_design.md`의 표, `field_formats.md`의 필드 형식 표, `attack_mapping.md`의 공격별 Detect/Contain/Recover 표를 우선 사용한다.
