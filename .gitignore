@@ -35,3 +35,4 @@ logs/
 # Generated reports / local exports
 outputs/
 reports/generated/
+*.zip

@@ -1,0 +1,404 @@
+from __future__ import annotations
+
+import json
+import html
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+import streamlit as st
+
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from dah_flawless.config import DEFAULT_ROUNDS, DEFAULT_SEED  # noqa: E402
+from dah_flawless.environment.hash_log import read_jsonl, verify_hash_chain  # noqa: E402
+from dah_flawless.environment.simulator import run_simulation  # noqa: E402
+from dah_flawless.scoring.metrics import summarize_logs  # noqa: E402
+
+DEFAULT_LOG_PATH = ROOT / "data" / "logs" / "round_logs.jsonl"
+DEFAULT_SUMMARY_PATH = ROOT / "data" / "logs" / "summary.json"
+
+
+def main() -> None:
+    st.set_page_config(page_title="DAH Flawless MVP", layout="wide")
+    _inject_style()
+
+    st.title("DAH Flawless MVP")
+
+    log_path = _sidebar_controls()
+    logs = _load_logs(log_path)
+    if not logs:
+        st.warning("로그가 없습니다. 왼쪽에서 시뮬레이션을 실행하세요.")
+        return
+
+    summary = summarize_logs(logs)
+    hash_valid = verify_hash_chain(logs)
+
+    _render_header(summary, hash_valid)
+
+    overview_tab, timeline_tab, diff_tab, chart_tab, decision_tab = st.tabs(
+        ["Overview", "Timeline", "Scorer/Admin Diff", "Charts", "Decision Logs"]
+    )
+
+    with overview_tab:
+        _render_overview(logs, summary)
+
+    with timeline_tab:
+        _render_timeline(logs)
+
+    with diff_tab:
+        _render_diff(logs)
+
+    with chart_tab:
+        _render_charts(logs)
+
+    with decision_tab:
+        _render_decisions(logs)
+
+
+def _sidebar_controls() -> Path:
+    st.sidebar.header("Run")
+    seed = st.sidebar.number_input("Seed", min_value=0, value=DEFAULT_SEED, step=1)
+    rounds = st.sidebar.number_input("Rounds", min_value=1, max_value=24, value=DEFAULT_ROUNDS, step=1)
+    log_path_text = st.sidebar.text_input("Log path", str(DEFAULT_LOG_PATH.relative_to(ROOT)))
+    log_path = (ROOT / log_path_text).resolve()
+
+    if st.sidebar.button("Run simulation", type="primary"):
+        logs, summary = run_simulation(
+            seed=int(seed),
+            rounds=int(rounds),
+            log_path=log_path,
+            summary_path=DEFAULT_SUMMARY_PATH,
+        )
+        st.sidebar.success(f"{len(logs)} rounds written")
+        st.sidebar.json(summary)
+
+    return log_path
+
+
+@st.cache_data(show_spinner=False)
+def _read_text(path_text: str, modified_ns: int) -> str:
+    return Path(path_text).read_text(encoding="utf-8")
+
+
+def _load_logs(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    text = _read_text(str(path), path.stat().st_mtime_ns)
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+def _render_header(summary: dict[str, Any], hash_valid: bool) -> None:
+    cards = [
+        {
+            "label": "라운드 수",
+            "value": str(summary["rounds"]),
+            "caption": "실행된 공방 턴",
+            "accent": "#2563eb",
+            "tone": "#eef6ff",
+        },
+        {
+            "label": "Blue 탐지율",
+            "value": _pct(summary["detection_rate"]),
+            "caption": "공격을 잡아낸 비율",
+            "accent": "#059669",
+            "tone": "#ecfdf5",
+        },
+        {
+            "label": "Red 공격 반영률",
+            "value": _pct(summary["attack_success_rate"]),
+            "caption": "관측값 오염 성공 비율",
+            "accent": "#dc2626",
+            "tone": "#fff1f2",
+        },
+        {
+            "label": "임무 가용성",
+            "value": f'{summary["final_availability"]:.2f}',
+            "caption": "방어 비용 차감 후 잔여치",
+            "accent": "#7c3aed",
+            "tone": "#f5f3ff",
+        },
+        {
+            "label": "로그 무결성",
+            "value": "정상" if hash_valid else "깨짐",
+            "caption": "JSONL 해시 체인 검증",
+            "accent": "#0f766e" if hash_valid else "#b91c1c",
+            "tone": "#f0fdfa" if hash_valid else "#fef2f2",
+        },
+    ]
+    st.markdown(
+        '<section class="summary-grid">'
+        + "".join(_summary_card(card) for card in cards)
+        + "</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_overview(logs: list[dict[str, Any]], summary: dict[str, Any]) -> None:
+    left, right = st.columns([1.2, 1])
+    with left:
+        st.subheader("Round Results")
+        st.dataframe(_scoreboard_rows(logs), width="stretch", hide_index=True)
+    with right:
+        st.subheader("Summary")
+        st.json(summary)
+
+    attack_counts = Counter(entry["attack"]["name"] for entry in logs)
+    winner_counts = Counter(entry["score"]["winner"] for entry in logs)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Attacks")
+        st.bar_chart(dict(attack_counts))
+    with col2:
+        st.subheader("Winners")
+        st.bar_chart(dict(winner_counts))
+
+
+def _render_timeline(logs: list[dict[str, Any]]) -> None:
+    st.subheader("Round Timeline")
+    for entry in logs:
+        score = entry["score"]
+        title = f'R{entry["round"]} | {entry["attack"]["name"]} | {score["winner"]}'
+        with st.expander(title, expanded=True):
+            cols = st.columns([1, 1, 1])
+            cols[0].metric("Target", entry["attack"]["target_domain"])
+            cols[1].metric("Threats", len(entry["threats"]))
+            cols[2].metric("Availability", f'{score["availability"]:.2f}')
+
+            st.markdown("**Situation Tags**")
+            st.write(", ".join(entry["situation_tags"]) or "none")
+
+            st.markdown("**Threats**")
+            st.dataframe(_threat_rows(entry), width="stretch", hide_index=True)
+
+            st.markdown("**Defense Actions**")
+            st.dataframe(_action_rows(entry), width="stretch", hide_index=True)
+
+            st.markdown("**Incident Report**")
+            st.json(entry["incident_report"])
+
+
+def _render_diff(logs: list[dict[str, Any]]) -> None:
+    st.subheader("Scorer/Admin Diff")
+    st.caption("이 탭은 scorer 증거 화면입니다. Blue Agent 입력에는 world가 포함되지 않습니다.")
+
+    for entry in logs:
+        evidence = entry["score"]["evidence"]
+        with st.expander(f'R{entry["round"]} {entry["attack"]["name"]}', expanded=True):
+            left, right = st.columns(2)
+            with left:
+                st.markdown("**Trusted value**")
+                st.json(evidence["trusted_value"])
+            with right:
+                st.markdown("**Observed value**")
+                st.json(evidence["observed_value"])
+            st.write(
+                {
+                    "target_domain": entry["attack"]["target_domain"],
+                    "mismatch": evidence["mismatch"],
+                    "blue_input_redacted": entry["blue_input_redacted"],
+                }
+            )
+
+
+def _render_charts(logs: list[dict[str, Any]]) -> None:
+    st.subheader("Mission Charts")
+
+    availability_rows = [
+        {"round": entry["round"], "availability": entry["score"]["availability"]} for entry in logs
+    ]
+    st.line_chart(availability_rows, x="round", y="availability")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Detection")
+        st.bar_chart(
+            {
+                "detected": sum(1 for entry in logs if entry["score"]["detection_success"]),
+                "missed": sum(1 for entry in logs if not entry["score"]["detection_success"]),
+            }
+        )
+    with col2:
+        st.subheader("Attack Outcome")
+        st.bar_chart(
+            {
+                "success": sum(1 for entry in logs if entry["score"]["attack_success"]),
+                "blocked": sum(1 for entry in logs if not entry["score"]["attack_success"]),
+            }
+        )
+
+
+def _render_decisions(logs: list[dict[str, Any]]) -> None:
+    st.subheader("Agent Decision Logs")
+    for entry in logs:
+        with st.expander(f'R{entry["round"]} decision log'):
+            st.dataframe(_decision_rows(entry), width="stretch", hide_index=True)
+            with st.popover("Raw JSON"):
+                st.json(entry["decision_log"])
+
+
+def _scoreboard_rows(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "round": entry["round"],
+            "attack": entry["attack"]["name"],
+            "target": entry["attack"]["target_domain"],
+            "winner": entry["score"]["winner"],
+            "attack_success": entry["score"]["attack_success"],
+            "detection_success": entry["score"]["detection_success"],
+            "availability": entry["score"]["availability"],
+        }
+        for entry in logs
+    ]
+
+
+def _threat_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "target": threat["target"],
+            "confidence": threat["confidence"],
+            "tags": ", ".join(threat["tags"]),
+            "evidence": " | ".join(threat["evidence"]),
+        }
+        for threat in entry["threats"]
+    ]
+
+
+def _action_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "action": action["action"],
+            "target": action["target"],
+            "priority": action["priority"],
+            "cost": action["availability_cost"],
+            "status": action["status"],
+        }
+        for action in entry["defense_actions"]
+    ]
+
+
+def _decision_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "agent": item["agent"],
+            "event": item["event"],
+            "reason": item["reason"],
+            "after": _compact(item.get("after")),
+        }
+        for item in entry["decision_log"]
+    ]
+
+
+def _compact(value: Any) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if len(text) > 160:
+        return text[:157] + "..."
+    return text
+
+
+def _pct(value: float) -> str:
+    return f"{value * 100:.0f}%"
+
+
+def _summary_card(card: dict[str, str]) -> str:
+    return (
+        f'<article class="summary-card" style="--accent:{_attr(card["accent"])}; --tone:{_attr(card["tone"])}">'
+        '<div class="summary-card__top">'
+        '<span class="summary-card__dot"></span>'
+        f'<span class="summary-card__label">{_text(card["label"])}</span>'
+        "</div>"
+        f'<div class="summary-card__value">{_text(card["value"])}</div>'
+        f'<div class="summary-card__caption">{_text(card["caption"])}</div>'
+        "</article>"
+    )
+
+
+def _text(value: str) -> str:
+    return html.escape(value, quote=False)
+
+
+def _attr(value: str) -> str:
+    return html.escape(value, quote=True)
+
+
+def _inject_style() -> None:
+    st.markdown(
+        """
+        <style>
+        .block-container {
+          padding-top: 1.6rem;
+          padding-bottom: 2rem;
+        }
+        .summary-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(140px, 1fr));
+          gap: 12px;
+          margin: 1rem 0 1.35rem;
+        }
+        .summary-card {
+          min-height: 118px;
+          border: 1px solid color-mix(in srgb, var(--accent) 28%, #d8dee9);
+          border-radius: 8px;
+          padding: 14px 15px;
+          background:
+            linear-gradient(180deg, var(--tone), #ffffff 76%);
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+        .summary-card__top {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          min-height: 22px;
+        }
+        .summary-card__dot {
+          width: 9px;
+          height: 9px;
+          border-radius: 999px;
+          background: var(--accent);
+          flex: 0 0 auto;
+        }
+        .summary-card__label {
+          color: #334155;
+          font-size: 0.86rem;
+          font-weight: 700;
+          line-height: 1.25;
+        }
+        .summary-card__value {
+          margin-top: 12px;
+          color: #0f172a;
+          font-size: 1.75rem;
+          font-weight: 800;
+          line-height: 1.05;
+        }
+        .summary-card__caption {
+          margin-top: 9px;
+          color: #64748b;
+          font-size: 0.78rem;
+          line-height: 1.35;
+        }
+        @media (max-width: 1100px) {
+          .summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 640px) {
+          .summary-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+if __name__ == "__main__":
+    main()

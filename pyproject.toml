@@ -1,0 +1,8 @@
+[project]
+name = "dah-flawless-mvp"
+version = "0.1.0"
+description = "DAH 2026 Red/Blue world-observed MVP simulation"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
