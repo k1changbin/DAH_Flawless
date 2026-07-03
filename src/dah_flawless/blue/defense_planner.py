@@ -11,6 +11,7 @@ from dah_flawless.config import (
     TRUST_PENALTY_FACTOR,
     TRUST_RECOVERY_PER_ROUND,
     TRUST_RESTORE_BONUS,
+    TRUSTED_RESTORE_DEGRADED_COST_MULTIPLIER,
 )
 from dah_flawless.schemas import DefenseAction, MissionRisk, Threat, decision
 
@@ -49,28 +50,48 @@ def apply_defense_actions(
     actions: list[DefenseAction],
     history: dict,
     threats: list[Threat] | None = None,
+    capabilities: dict | None = None,
 ) -> dict:
     next_state = deepcopy(state)
+    capabilities = capabilities if capabilities is not None else next_state.get("capabilities", {})
     active_actions = []
+    effective_actions: list[DefenseAction] = []
     for action in actions:
-        active = DefenseAction(
-            action=action.action,
-            target=action.target,
-            priority=action.priority,
-            duration_ticks=0,
-            availability_cost=action.availability_cost,
-            status="DONE",
-        )
+        active = _effective_action_for_capability(action, capabilities)
+        effective_actions.append(active)
         active_actions.append(active.to_dict())
-        _apply_single_action(next_state, active, history)
+        if not active.status.startswith("FAILED"):
+            _apply_single_action(next_state, active, history)
 
-    total_cost = sum(action.availability_cost for action in actions)
+    total_cost = sum(action.availability_cost for action in effective_actions)
     next_state["mission"]["availability"] = max(0.0, round(next_state["mission"]["availability"] - total_cost, 4))
     next_state["mission"]["trust_budget"] = max(0.0, round(next_state["mission"]["trust_budget"] - total_cost * 0.8, 4))
     next_state["defense_runtime"]["active_defenses"] = active_actions
     next_state["defense_runtime"]["pending_defenses"] = []
-    _update_domain_trust(next_state, actions, threats or [])
+    _update_domain_trust(next_state, effective_actions, threats or [])
     return next_state
+
+
+def _effective_action_for_capability(action: DefenseAction, capabilities: dict) -> DefenseAction:
+    availability_cost = action.availability_cost
+    status = "DONE"
+
+    if _is_trusted_restore_action(action):
+        restore_capability = capabilities.get("trusted_restore", "OK")
+        if restore_capability == "DEGRADED":
+            availability_cost = round(availability_cost * TRUSTED_RESTORE_DEGRADED_COST_MULTIPLIER, 4)
+            status = "DONE_RESTORE_DEGRADED"
+        elif restore_capability == "UNAVAILABLE":
+            status = "FAILED_RESTORE_UNAVAILABLE"
+
+    return DefenseAction(
+        action=action.action,
+        target=action.target,
+        priority=action.priority,
+        duration_ticks=0,
+        availability_cost=availability_cost,
+        status=status,
+    )
 
 
 def _actions_for_threat(threat: Threat, confirmed: bool) -> list[DefenseAction]:
@@ -123,6 +144,10 @@ def _action_domain(action: DefenseAction) -> str:
 
 
 def _restores_trusted_state(action: DefenseAction) -> bool:
+    return _is_trusted_restore_action(action) and not action.status.startswith("FAILED")
+
+
+def _is_trusted_restore_action(action: DefenseAction) -> bool:
     return action.action in {"FALLBACK_TO_TRUSTED_STATE", "HOLD_COMMAND", "QUARANTINE_FIELD"}
 
 

@@ -4,11 +4,13 @@ the Stealth Controller (adaptive Red stealth)."""
 import unittest
 
 from dah_flawless.attacks.red_agent import RedAgent
-from dah_flawless.blue.defense_planner import plan_defense
+from dah_flawless.blue.defense_planner import apply_defense_actions, plan_defense
 from dah_flawless.blue.invariants import analyze_invariants
+from dah_flawless.blue.tagger import derive_tags
+from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.simulator import run_simulation
-from dah_flawless.environment.state_factory import create_baseline_state
-from dah_flawless.schemas import Threat
+from dah_flawless.environment.state_factory import create_baseline_state, make_history
+from dah_flawless.schemas import DefenseAction, Threat
 
 
 class DegradedScenarioTests(unittest.TestCase):
@@ -29,6 +31,44 @@ class DegradedScenarioTests(unittest.TestCase):
         ok = analyze_invariants({}, {}, tags, {"cross_check_telemetry": "OK"})
         degraded = analyze_invariants({}, {}, tags, {"cross_check_telemetry": "DEGRADED"})
         self.assertGreater(ok[0].confidence, degraded[0].confidence)
+
+    def test_degraded_cross_check_emits_red_preference_tag(self):
+        state = create_baseline_state(seed=1, scenario="degraded_start")
+        tags = derive_tags(redact_state(state), make_history(state))
+
+        self.assertIn("CROSS_CHECK_UNAVAILABLE", tags)
+
+    def test_degraded_start_first_round_keeps_initial_availability(self):
+        logs, _ = run_simulation(seed=42, rounds=1, scenario="degraded_start")
+        defense_log = next(
+            item for item in logs[0]["decision_log"] if item["agent"] == "DefensePlannerAgent"
+        )
+
+        self.assertEqual(defense_log["before"]["availability"], 0.55)
+
+    def test_degraded_trusted_restore_raises_restore_cost(self):
+        logs, _ = run_simulation(seed=42, rounds=1, scenario="degraded_start")
+        restore_action = next(
+            action for action in logs[0]["defense_actions"] if action["action"] == "QUARANTINE_FIELD"
+        )
+
+        self.assertEqual(restore_action["availability_cost"], 0.075)
+        self.assertEqual(restore_action["status"], "DONE_RESTORE_DEGRADED")
+
+    def test_unavailable_trusted_restore_does_not_recover_from_history(self):
+        state = create_baseline_state(seed=1)
+        history = make_history(state)
+        state["capabilities"]["trusted_restore"] = "UNAVAILABLE"
+        state["blue_observed"]["mission"]["area_priority"] = {"A": 0.2, "B": 0.4, "C": 0.95}
+        action = DefenseAction("QUARANTINE_FIELD", "blue_observed.mission.area_priority", 3, 1, 0.05)
+
+        defended = apply_defense_actions(state, [action], history, capabilities=state["capabilities"])
+
+        self.assertEqual(defended["blue_observed"]["mission"]["area_priority"], {"A": 0.2, "B": 0.4, "C": 0.95})
+        self.assertEqual(
+            defended["defense_runtime"]["active_defenses"][0]["status"],
+            "FAILED_RESTORE_UNAVAILABLE",
+        )
 
 
 class StealthControllerTests(unittest.TestCase):

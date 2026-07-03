@@ -47,7 +47,7 @@ def run_simulation(
     for round_number in range(1, rounds + 1):
         state = _advance_normal_state(state, round_number)
         redacted_for_red = redact_state(state)
-        pre_attack_tags = derive_tags(redacted_for_red, history)
+        pre_attack_tags = derive_tags(redacted_for_red, history, redacted_for_red["capabilities"])
         attack, stealth, red_tactic, red_choice_log = red_agent.choose_attack(
             round_number, redacted_for_red, pre_attack_tags
         )
@@ -61,7 +61,7 @@ def run_simulation(
         )
         risks, risk_log = estimate_mission_risk(redacted_for_blue, threats)
         actions, defense_log = plan_defense(threats, risks, attacked_state["mission"], attacked_state["defense_runtime"])
-        defended_state = apply_defense_actions(attacked_state, actions, history, threats)
+        defended_state = apply_defense_actions(attacked_state, actions, history, threats, attacked_state["capabilities"])
         score = score_round(pre_defense_state, defended_state, attack, threats, actions)
         report, report_log = write_incident_report(threats, risks, actions, score)
         red_update_log = red_agent.update_weight(attack.name, score.detection_success)
@@ -114,7 +114,8 @@ def run_simulation(
 def _advance_normal_state(state: dict, round_number: int) -> dict:
     next_state = deepcopy(state)
     next_state["round"] = round_number
-    _recover_operational_budget(next_state)
+    if round_number > 1:
+        _recover_operational_budget(next_state)
     next_state["world"]["time"]["round"] = round_number
     next_state["world"]["time"]["true_timestamp"] += ROUND_SECONDS
     next_state["world"]["command"]["expected_sequence_number"] += 1

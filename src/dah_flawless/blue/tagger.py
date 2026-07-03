@@ -1,4 +1,4 @@
-"""Observed-only situation tag derivation."""
+"""Observed situation tag derivation."""
 
 from __future__ import annotations
 
@@ -11,10 +11,13 @@ from dah_flawless.config import (
 )
 
 
-def derive_tags(redacted_state: dict, history: dict) -> list[str]:
+def derive_tags(redacted_state: dict, history: dict, capabilities: dict | None = None) -> list[str]:
     obs = redacted_state["blue_observed"]
+    capabilities = capabilities if capabilities is not None else redacted_state.get("capabilities", {})
     tags: list[str] = []
 
+    if capabilities.get("cross_check_telemetry") in {"DEGRADED", "UNAVAILABLE"}:
+        tags.append("CROSS_CHECK_UNAVAILABLE")
     if obs["navigation"]["gnss_fix_quality"] == "NORMAL":
         tags.append("GNSS_PRIMARY")
     if obs["navigation"]["satellite_count"] < 5 or obs["navigation"]["hdop"] > 5.0:
