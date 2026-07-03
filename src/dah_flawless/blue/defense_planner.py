@@ -69,6 +69,7 @@ def apply_defense_actions(
     next_state["defense_runtime"]["active_defenses"] = active_actions
     next_state["defense_runtime"]["pending_defenses"] = []
     _update_domain_trust(next_state, effective_actions, threats or [])
+    _refresh_last_known_good(next_state, threats)
     return next_state
 
 
@@ -154,14 +155,36 @@ def _is_trusted_restore_action(action: DefenseAction) -> bool:
 def _apply_single_action(state: dict, action: DefenseAction, history: dict) -> None:
     if action.action in {"QUARANTINE_FIELD", "FALLBACK_TO_TRUSTED_STATE"}:
         target = action.target.removeprefix("blue_observed.")
-        fallback = _get_path(history["last_observed"], target)
+        fallback = _get_path(_trusted_restore_source(state, history), target)
         _set_path(state["blue_observed"], target, deepcopy(fallback))
     elif action.action == "HOLD_COMMAND":
-        state["blue_observed"]["c2_message"]["command"] = history["last_command"]
-        state["blue_observed"]["c2_message"]["sequence_number"] = history["last_sequence_number"]
-        state["blue_observed"]["time"]["received_timestamp"] = history["last_received_timestamp"]
+        source = _trusted_restore_source(state, history)
+        state["blue_observed"]["c2_message"]["command"] = source["c2_message"]["command"]
+        state["blue_observed"]["c2_message"]["sequence_number"] = source["c2_message"]["sequence_number"]
+        state["blue_observed"]["time"]["received_timestamp"] = source["time"]["received_timestamp"]
     elif action.action == "REQUEST_REVALIDATION":
         state["blue_observed"]["comms"]["message_queue_depth"] += 1
+
+
+def _trusted_restore_source(state: dict, history: dict) -> dict:
+    return state.get("last_known_good", history["last_observed"])
+
+
+def _refresh_last_known_good(state: dict, threats: list[Threat] | None) -> None:
+    if threats is None:
+        return
+
+    last_known_good = state.setdefault("last_known_good", deepcopy(state["blue_observed"]))
+    threatened_domains = {threat.target for threat in threats}
+    observed = state["blue_observed"]
+
+    if "telemetry" not in threatened_domains:
+        last_known_good["telemetry"] = deepcopy(observed["telemetry"])
+    if "mission" not in threatened_domains:
+        last_known_good["mission"] = deepcopy(observed["mission"])
+    if "command" not in threatened_domains:
+        last_known_good["c2_message"] = deepcopy(observed["c2_message"])
+        last_known_good["time"] = deepcopy(observed["time"])
 
 
 def _get_path(data: dict, path: str) -> Any:

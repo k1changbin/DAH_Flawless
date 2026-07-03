@@ -70,6 +70,25 @@ class DegradedScenarioTests(unittest.TestCase):
             "FAILED_RESTORE_UNAVAILABLE",
         )
 
+    def test_trusted_restore_uses_last_known_good_not_last_observed(self):
+        state = create_baseline_state(seed=1)
+        clean_priority = dict(state["last_known_good"]["mission"]["area_priority"])
+        poisoned_priority = {"A": 0.2, "B": 0.4, "C": 0.95}
+        state["blue_observed"]["mission"]["area_priority"] = poisoned_priority
+        contaminated_history = make_history(state)
+        action = DefenseAction("QUARANTINE_FIELD", "blue_observed.mission.area_priority", 3, 1, 0.05)
+
+        defended = apply_defense_actions(
+            state,
+            [action],
+            contaminated_history,
+            threats=[Threat("mission", 0.9, ("MISSION_PRIORITY_CHANGED",), ("priority changed sharply",))],
+            capabilities=state["capabilities"],
+        )
+
+        self.assertEqual(defended["blue_observed"]["mission"]["area_priority"], clean_priority)
+        self.assertEqual(contaminated_history["last_area_priority"], poisoned_priority)
+
 
 class StealthControllerTests(unittest.TestCase):
     def test_static_stealth_telemetry_is_caught_by_cross_checks(self):
