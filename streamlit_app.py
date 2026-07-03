@@ -14,7 +14,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from dah_flawless.config import DEFAULT_ROUNDS, DEFAULT_SEED  # noqa: E402
+from dah_flawless.config import DEFAULT_ROUNDS, DEFAULT_SEED, SCENARIOS, STEALTH_MODES  # noqa: E402
 from dah_flawless.environment.hash_log import read_jsonl, verify_hash_chain  # noqa: E402
 from dah_flawless.environment.simulator import run_simulation  # noqa: E402
 from dah_flawless.scoring.metrics import summarize_logs  # noqa: E402
@@ -64,6 +64,18 @@ def _sidebar_controls() -> Path:
     st.sidebar.header("Run")
     seed = st.sidebar.number_input("Seed", min_value=0, value=DEFAULT_SEED, step=1)
     rounds = st.sidebar.number_input("Rounds", min_value=1, max_value=24, value=DEFAULT_ROUNDS, step=1)
+    scenario = st.sidebar.selectbox(
+        "Scenario",
+        SCENARIOS,
+        index=0,
+        help="degraded_start begins partially paralyzed (low availability + degraded capabilities).",
+    )
+    red_stealth = st.sidebar.selectbox(
+        "Red stealth",
+        STEALTH_MODES,
+        index=0,
+        help="on/adaptive lets Red shrink telemetry mutations under Blue's detection threshold.",
+    )
     log_path_text = st.sidebar.text_input("Log path", str(DEFAULT_LOG_PATH.relative_to(ROOT)))
     log_path = (ROOT / log_path_text).resolve()
 
@@ -73,6 +85,8 @@ def _sidebar_controls() -> Path:
             rounds=int(rounds),
             log_path=log_path,
             summary_path=DEFAULT_SUMMARY_PATH,
+            scenario=scenario,
+            stealth_mode=red_stealth,
         )
         st.sidebar.success(f"{len(logs)} rounds written")
         st.sidebar.json(summary)

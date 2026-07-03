@@ -13,7 +13,16 @@ from dah_flawless.blue.incident_report import write_incident_report
 from dah_flawless.blue.mission_monitor import estimate_mission_risk
 from dah_flawless.blue.tagger import derive_tags
 from dah_flawless.blue.threat_detection import detect_threats
-from dah_flawless.config import DEFAULT_ROUNDS, DEFAULT_SEED, ROUND_SECONDS
+from dah_flawless.config import (
+    ACTIVE_DEFENSE_RECOVERY_PENALTY,
+    AVAILABILITY_RECOVERY_PER_ROUND,
+    DEFAULT_ROUNDS,
+    DEFAULT_SCENARIO,
+    DEFAULT_SEED,
+    DEFAULT_STEALTH_MODE,
+    ROUND_SECONDS,
+    TRUST_BUDGET_RECOVERY_PER_ROUND,
+)
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
@@ -26,10 +35,12 @@ def run_simulation(
     rounds: int = DEFAULT_ROUNDS,
     log_path: Optional[Path] = None,
     summary_path: Optional[Path] = None,
+    scenario: str = DEFAULT_SCENARIO,
+    stealth_mode: str = DEFAULT_STEALTH_MODE,
 ) -> tuple[list[dict], dict]:
-    state = create_baseline_state(seed)
+    state = create_baseline_state(seed, scenario)
     history = make_history(state)
-    red_agent = RedAgent(seed)
+    red_agent = RedAgent(seed, stealth_mode=stealth_mode)
     logs: list[dict] = []
     prev_hash = GENESIS_HASH
 
@@ -37,16 +48,20 @@ def run_simulation(
         state = _advance_normal_state(state, round_number)
         redacted_for_red = redact_state(state)
         pre_attack_tags = derive_tags(redacted_for_red, history)
-        attack, red_choice_log = red_agent.choose_attack(round_number, redacted_for_red, pre_attack_tags)
+        attack, stealth, red_tactic, red_choice_log = red_agent.choose_attack(
+            round_number, redacted_for_red, pre_attack_tags
+        )
 
-        attacked_state, mutation_log = apply_attack(state, attack)
+        attacked_state, mutation_log = apply_attack(state, attack, stealth=stealth, tactic=red_tactic)
         pre_defense_state = deepcopy(attacked_state)
 
         redacted_for_blue = redact_state(attacked_state)
-        situation_tags, threats, threat_log = detect_threats(redacted_for_blue, history)
+        situation_tags, threats, threat_log = detect_threats(
+            redacted_for_blue, history, attacked_state["capabilities"]
+        )
         risks, risk_log = estimate_mission_risk(redacted_for_blue, threats)
-        actions, defense_log = plan_defense(threats, risks, attacked_state["mission"])
-        defended_state = apply_defense_actions(attacked_state, actions, history)
+        actions, defense_log = plan_defense(threats, risks, attacked_state["mission"], attacked_state["defense_runtime"])
+        defended_state = apply_defense_actions(attacked_state, actions, history, threats)
         score = score_round(pre_defense_state, defended_state, attack, threats, actions)
         report, report_log = write_incident_report(threats, risks, actions, score)
         red_update_log = red_agent.update_weight(attack.name, score.detection_success)
@@ -54,8 +69,11 @@ def run_simulation(
         entry_without_hash = {
             "round": round_number,
             "seed": seed,
+            "scenario": scenario,
             "situation_tags": situation_tags,
             "attack": attack.to_dict(),
+            "stealth": stealth,
+            "red_tactic": red_tactic,
             "threats": [threat.to_dict() for threat in threats],
             "mission_risks": [risk.to_dict() for risk in risks],
             "defense_actions": defended_state["defense_runtime"]["active_defenses"],
@@ -81,6 +99,8 @@ def run_simulation(
         history = make_history(state)
 
     summary = summarize_logs(logs)
+    summary["scenario"] = scenario
+    summary["stealth_mode"] = stealth_mode
     if log_path is not None:
         write_jsonl(log_path, logs)
     if summary_path is not None:
@@ -94,6 +114,7 @@ def run_simulation(
 def _advance_normal_state(state: dict, round_number: int) -> dict:
     next_state = deepcopy(state)
     next_state["round"] = round_number
+    _recover_operational_budget(next_state)
     next_state["world"]["time"]["round"] = round_number
     next_state["world"]["time"]["true_timestamp"] += ROUND_SECONDS
     next_state["world"]["command"]["expected_sequence_number"] += 1
@@ -108,5 +129,20 @@ def _advance_normal_state(state: dict, round_number: int) -> dict:
     obs["mission"]["area_priority"] = deepcopy(next_state["world"]["mission"]["area_priority"])
     obs["mission"]["recommended_area"] = "A"
     obs["telemetry"]["battery_percent"] = next_state["world"]["uav"]["battery_percent"]
+    obs["telemetry"]["battery_drain_rate"] = next_state["world"]["uav"]["battery_drain_rate"]
     obs["telemetry"]["motor_status"] = next_state["world"]["uav"]["motor_status"]
     return next_state
+
+
+def _recover_operational_budget(state: dict) -> None:
+    previous_cost = sum(
+        float(action.get("availability_cost", 0.0))
+        for action in state["defense_runtime"].get("active_defenses", [])
+    )
+    penalty = min(AVAILABILITY_RECOVERY_PER_ROUND, previous_cost * ACTIVE_DEFENSE_RECOVERY_PENALTY)
+    availability_recovery = max(0.02, AVAILABILITY_RECOVERY_PER_ROUND - penalty)
+    trust_recovery = max(0.01, TRUST_BUDGET_RECOVERY_PER_ROUND - penalty * 0.8)
+
+    mission = state["mission"]
+    mission["availability"] = min(1.0, round(mission["availability"] + availability_recovery, 4))
+    mission["trust_budget"] = min(1.0, round(mission["trust_budget"] + trust_recovery, 4))

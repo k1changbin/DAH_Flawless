@@ -7,11 +7,22 @@ from copy import deepcopy
 from dah_flawless.schemas import Attack
 
 
-def apply_attack(state: dict, attack: Attack) -> tuple[dict, dict]:
+def apply_attack(
+    state: dict,
+    attack: Attack,
+    stealth: bool = False,
+    tactic: dict | None = None,
+) -> tuple[dict, dict]:
     """Apply an attack to blue_observed only.
 
     The function intentionally never reads state["world"]. This keeps Red's
     mutation model aligned with the world/observed split.
+
+    When ``stealth`` is set, Red uses a smaller telemetry mutation that still
+    leaves observed values mismatched from world. Cross-signal checks can still
+    catch a static small jump; adaptive Red can pass ``tactic["probe_delta"]``
+    to probe the boundary. PRIORITY_POISONING and TIME_DESYNC_REPLAY have no
+    useful stealth margin, so stealth only changes their log metadata.
     """
 
     next_state = deepcopy(state)
@@ -22,8 +33,15 @@ def apply_attack(state: dict, attack: Attack) -> tuple[dict, dict]:
             "battery_percent": obs["telemetry"]["battery_percent"],
             "motor_status": obs["telemetry"]["motor_status"],
         }
-        obs["telemetry"]["battery_percent"] = 82
-        obs["telemetry"]["motor_status"] = "OK"
+        if stealth:
+            # Without a tactic this preserves the old static stealth value
+            # (20 -> 44). Adaptive Red can pass a smaller probe_delta.
+            probe_delta = int((tactic or {}).get("probe_delta", 24))
+            obs["telemetry"]["battery_percent"] = min(100, obs["telemetry"]["battery_percent"] + probe_delta)
+            obs["telemetry"]["motor_status"] = "FAULT"
+        else:
+            obs["telemetry"]["battery_percent"] = 82
+            obs["telemetry"]["motor_status"] = "OK"
         after = {
             "battery_percent": obs["telemetry"]["battery_percent"],
             "motor_status": obs["telemetry"]["motor_status"],
@@ -56,6 +74,8 @@ def apply_attack(state: dict, attack: Attack) -> tuple[dict, dict]:
         "agent": "RedAgent",
         "event": "mutation_applied",
         "reason": attack.name,
+        "stealth": stealth,
+        "tactic": tactic or {"stealth": stealth},
         "before": before,
         "after": after,
     }

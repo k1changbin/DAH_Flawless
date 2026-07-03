@@ -36,3 +36,10 @@ logs/
 outputs/
 reports/generated/
 *.zip
+data/
+reports/run/
+reports/deg/
+
+# Local tool config / review artifacts (not shared team assets)
+.claude/
+docs/reviews/

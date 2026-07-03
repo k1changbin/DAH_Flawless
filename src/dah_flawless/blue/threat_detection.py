@@ -7,9 +7,11 @@ from dah_flawless.blue.tagger import derive_tags
 from dah_flawless.schemas import Threat, decision
 
 
-def detect_threats(redacted_state: dict, history: dict) -> tuple[list[str], list[Threat], dict]:
+def detect_threats(
+    redacted_state: dict, history: dict, capabilities: dict | None = None
+) -> tuple[list[str], list[Threat], dict]:
     tags = derive_tags(redacted_state, history)
-    threats = analyze_invariants(redacted_state, history, tags)
+    threats = analyze_invariants(redacted_state, history, tags, capabilities)
     log = decision(
         "ThreatDetectionAgent",
         "invariants_checked",
