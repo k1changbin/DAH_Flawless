@@ -39,6 +39,7 @@ reports/generated/
 data/
 reports/run/
 reports/deg/
+tmp/world/
 
 # Local tool config / review artifacts (not shared team assets)
 .claude/

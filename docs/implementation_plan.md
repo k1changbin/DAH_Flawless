@@ -4,6 +4,8 @@
 제출 마감: 2026-07-10 23:59 KST  
 목표: 예선 보고서 8항목 중 ④ 공격 시나리오, ⑤ 방어 아키텍처, ⑥ AI 에이전트 설계를 구현 로그와 그림으로 증명한다.
 
+> 용어 업데이트(2026-07-04): 이 계획서의 옛 `world` 표현은 현재 구현 기준으로 `scorer_truth(state["world"])`에 해당한다. 현실 원천 신호는 `raw_world`, AI가 받은 입력은 `blue_observed`라고 구분한다. 최신 기준은 `docs/llm_alignment_guide.md`를 우선한다.
+
 ---
 
 ## 1. 현재 저장소 판독 결과
@@ -16,7 +18,7 @@
 |---|---|
 | `README.md` | 전체 전략, 배점 대응, MVP 합격선, 즉시 실행 체크리스트 |
 | `docs/README.md` | 설계 문서 읽는 순서와 보고서 반영 우선순위 |
-| `docs/world_observed_model.md` | `world`와 `blue_observed` 분리 원칙, Red/Blue/Scorer 접근 권한 |
+| `docs/world_observed_model.md` | `raw_world`, `scorer_truth`, `blue_observed` 분리 원칙, Red/Blue/Scorer 접근 권한 |
 | `docs/schema_design.md` | MVP 상태 JSON 구조의 기준 |
 | `docs/field_formats.md` | 필드 타입, 단위, enum, 로그 형식 |
 | `docs/situation_tags.md` | observed 기반 태그 규칙, Red/Blue 공통 입력 |
@@ -76,7 +78,7 @@ DAH2026_소스코드_[팀명].zip
 
 ```text
 Blue Agent 입력에는 world가 절대 들어가지 않는다.
-world는 Environment와 Scorer만 접근한다.
+scorer_truth(state["world"])는 Environment와 Scorer만 접근한다.
 ```
 
 이 조건은 문서 주장으로 끝내지 않고 테스트로 강제한다.
@@ -150,13 +152,13 @@ reports/
 MVP는 라운드 기반 시뮬레이터로 만든다.
 
 ```text
-1. Environment가 world와 blue_observed를 가진 state를 만든다.
+1. Environment가 scorer_truth(state["world"])와 blue_observed를 가진 state를 만든다.
 2. Red Agent가 blue_observed와 situation_tags만 보고 공격을 선택한다.
 3. Environment가 공격 mutation을 blue_observed에만 적용한다.
-4. Environment가 world를 제거한 redacted state를 Blue에 넘긴다.
+4. Environment가 scorer_truth 키를 제거한 redacted state를 Blue에 넘긴다.
 5. Blue 4-Agent가 태그, 위협, 임무 영향, 최소 방어를 계산한다.
 6. Defense Planner가 방어 큐에 action을 넣고 availability/trust_budget을 차감한다.
-7. Scorer가 world와 blue_observed를 비교해 승패를 판정한다.
+7. Scorer가 scorer_truth와 blue_observed를 비교해 승패를 판정한다.
 8. Hash log가 라운드 로그를 JSONL로 남긴다.
 9. Red/Blue는 scorer 피드백만 받아 다음 라운드 가중치나 임계값을 조정한다.
 ```
@@ -323,7 +325,7 @@ RECOVERY_WINDOW = 2
 
 1. `schemas.py`에 상태, 공격, threat, defense action, score 타입을 만든다.
 2. `state_factory.py`에 baseline scenario를 만든다.
-3. `redaction.py`에서 `world` 제거를 구현하고 테스트한다.
+3. `redaction.py`에서 scorer_truth 키 제거를 구현하고 테스트한다.
 4. `catalog.py`에 공격 3종과 feasibility/weight/preferred_tags를 등록한다.
 5. `mutations.py`에 공격 3종의 observed-only 변조를 구현한다.
 6. `tagger.py`에 observed 기반 situation tag를 구현한다.
@@ -342,7 +344,7 @@ RECOVERY_WINDOW = 2
 
 | 테스트 | 검증 내용 |
 |---|---|
-| `test_redaction.py` | Blue 입력에 `world`가 없고 scorer만 world 접근 |
+| `test_redaction.py` | Blue 입력에 scorer_truth 키가 없고 scorer만 접근 |
 | `test_seed_reproducibility.py` | 같은 seed에서 같은 JSONL과 summary 생성 |
 | `test_attacks_e2e.py` | 공격 3종이 각각 target domain mismatch를 만든다 |
 | `test_invariants.py` | Blue가 공격명을 보지 않고 위협을 탐지한다 |
@@ -360,7 +362,7 @@ RECOVERY_WINDOW = 2
 | 1. 표지 | 1 | 팀명, 제목, 제출일 |
 | 2. 목차 | 1 | 8항목 목차 |
 | 3. 팀 구성 및 역할 | 2~3 | 팀원 전문성, 코드 소유권, 보고서 담당 |
-| 4. 방산 분야 공격 시나리오 | 8~10 | 공격 3종 8필드, world/observed diff, 실행 로그 |
+| 4. 방산 분야 공격 시나리오 | 8~10 | 공격 3종 8필드, scorer_truth/observed diff, 실행 로그 |
 | 5. 공격 대응 방어 아키텍처 | 7~8 | 불변식, D/C/R 표, 방어 큐, availability |
 | 6. AI 에이전트 설계 및 구현 | 7~8 | Red/Blue/Scorer 협력 구조, agent loop, decision_log |
 | 7. 결론 및 향후 계획 | 2~3 | 기대효과, 한계, 본선 확장 |
@@ -375,7 +377,7 @@ RECOVERY_WINDOW = 2
 | 리스크 | 대응 |
 |---|---|
 | 구현 범위 과다 | 공격 3종, scorer, 그림 생성까지를 Must로 고정 |
-| Blue가 world를 보는 설계 오류 | `test_redaction.py`를 첫날 작성 |
+| Blue가 scorer_truth를 보는 설계 오류 | `test_redaction.py`를 첫날 작성 |
 | 공격이 단순 기능 목록처럼 보임 | 보고서에서는 8필드 운용 서사로 설명 |
 | 채점이 자의적으로 보임 | scorer 수식을 코드와 보고서에 동일하게 공개 |
 | 대시보드에 시간 소모 | Streamlit은 Nice로 미루고 정적 PNG 먼저 |
@@ -389,8 +391,8 @@ RECOVERY_WINDOW = 2
 
 아래가 모두 충족되면 예선 제출 가능한 상태로 본다.
 
-1. 공격 3종이 모두 실행되고 `world`와 `blue_observed`의 차이를 만든다.
-2. Blue 입력에 `world`가 없음을 테스트로 증명한다.
+1. 공격 3종이 모두 실행되고 `scorer_truth`와 `blue_observed`의 차이를 만든다.
+2. Blue 입력에 scorer_truth 키가 없음을 테스트로 증명한다.
 3. Blue가 공격명을 직접 보지 않고 불변식으로 탐지한다.
 4. Detect/Contain/Recover action이 JSONL 로그에 남는다.
 5. scorer가 승패를 고정 규칙으로 판정한다.
@@ -407,7 +409,7 @@ RECOVERY_WINDOW = 2
 이 프로젝트는 “AI가 믿는 관측값을 방어한다”는 컨셉과 “과잉 방어도 임무 실패”라는 차별점이 이미 강하다. 따라서 지금부터는 기능을 넓히기보다 아래 순서로 깊게 만든다.
 
 ```text
-world/observed 분리
+raw_world/scorer_truth/observed 분리
 → 공격 3종 E2E
 → 불변식 탐지와 최소 방어
 → scorer와 seed 로그

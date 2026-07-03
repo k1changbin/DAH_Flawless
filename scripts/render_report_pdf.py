@@ -113,7 +113,7 @@ def render_pdf(markdown_path: Path, output_path: Path) -> Path:
             "Fill final member names before submission. Current report draft keeps role ownership and evidence ownership fixed.",
             "Attack lead owns Red Agent design and operational attack narratives.",
             "Defense lead owns invariant detection, containment, recovery, and availability-cost policy.",
-            "Simulation lead owns world/observed split, scorer, seed reproducibility, and hash-chain logs.",
+            "Simulation lead owns raw_world/scorer_truth/observed split, scorer, seed reproducibility, and hash-chain logs.",
             "Documentation lead owns figures, evidence trace, final PDF assembly, and source ZIP verification.",
         ],
         table=[

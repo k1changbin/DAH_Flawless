@@ -16,10 +16,10 @@ def apply_attack(
     """Apply an attack to blue_observed only.
 
     The function intentionally never reads state["world"]. This keeps Red's
-    mutation model aligned with the world/observed split.
+    mutation model aligned with the scorer_truth/observed split.
 
     When ``stealth`` is set, Red uses a smaller telemetry mutation that still
-    leaves observed values mismatched from world. Cross-signal checks can still
+    leaves observed values mismatched from scorer truth. Cross-signal checks can still
     catch a static small jump; adaptive Red can pass ``tactic["probe_delta"]``
     to probe the boundary. PRIORITY_POISONING and TIME_DESYNC_REPLAY have no
     useful stealth margin, so stealth only changes their log metadata.
@@ -56,16 +56,22 @@ def apply_attack(
             "sequence_number": obs["c2_message"]["sequence_number"],
             "received_timestamp": obs["time"]["received_timestamp"],
             "command": obs["c2_message"]["command"],
+            "ack_sequence_number": obs["c2_message"].get("ack", {}).get("sequence_number"),
+            "latency_ms": obs["comms"].get("latency_ms"),
+            "packet_loss": obs["comms"].get("packet_loss"),
+            "ack_delay_ms": obs["comms"].get("ack_delay_ms"),
+            "heartbeat_gap_ms": obs["comms"].get("heartbeat_gap_ms"),
         }
-        obs["c2_message"]["sequence_number"] = 1008
-        obs["time"]["received_timestamp"] = obs["time"]["received_timestamp"] - 400
-        obs["c2_message"]["command"] = "CONTINUE_MISSION"
-        obs["comms"]["latency_ms"] = 850
-        obs["comms"]["packet_loss"] = 0.12
+        _apply_time_desync_tactic(obs, tactic or {})
         after = {
             "sequence_number": obs["c2_message"]["sequence_number"],
             "received_timestamp": obs["time"]["received_timestamp"],
             "command": obs["c2_message"]["command"],
+            "ack_sequence_number": obs["c2_message"].get("ack", {}).get("sequence_number"),
+            "latency_ms": obs["comms"].get("latency_ms"),
+            "packet_loss": obs["comms"].get("packet_loss"),
+            "ack_delay_ms": obs["comms"].get("ack_delay_ms"),
+            "heartbeat_gap_ms": obs["comms"].get("heartbeat_gap_ms"),
         }
     else:
         raise ValueError(f"mutation not implemented for {attack.name}")
@@ -80,3 +86,47 @@ def apply_attack(
         "after": after,
     }
     return next_state, mutation_log
+
+
+def _apply_time_desync_tactic(obs: dict, tactic: dict) -> None:
+    strategy = tactic.get("strategy", "replay")
+    params = tactic.get("params", {})
+
+    if strategy == "delay":
+        obs["time"]["received_timestamp"] += int(params.get("timestamp_delta_s", -180))
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        obs["comms"]["latency_ms"] = int(params.get("latency_ms", 900))
+        obs["comms"]["packet_interval_jitter_ms"] = 460
+        obs["comms"]["packet_loss"] = max(obs["comms"].get("packet_loss", 0.0), 0.08)
+    elif strategy == "selective_drop":
+        obs["c2_message"]["sequence_number"] += 3
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        obs["comms"]["packet_loss"] = float(params.get("packet_loss", 0.16))
+        obs["comms"]["heartbeat_gap_ms"] = int(params.get("heartbeat_gap_ms", 3600))
+        obs["comms"]["packet_interval_jitter_ms"] = 460
+    elif strategy == "ack_confusion":
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        ack = obs["c2_message"].setdefault("ack", {})
+        ack["visible"] = True
+        ack["sequence_number"] = obs["c2_message"]["sequence_number"] + int(params.get("ack_sequence_delta", -2))
+        ack["status"] = "ACCEPTED"
+        obs["comms"]["ack_visible"] = True
+        obs["comms"]["ack_delay_ms"] = int(params.get("ack_delay_ms", 950))
+        obs["comms"]["latency_ms"] = max(obs["comms"].get("latency_ms", 0), 540)
+    elif strategy == "metadata_poisoning":
+        obs["c2_message"]["sequence_number"] += int(params.get("sequence_delta", -2))
+        obs["time"]["received_timestamp"] += int(params.get("timestamp_delta_s", -90))
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        obs["c2_message"]["sysid"] = 99
+        obs["c2_message"]["compid"] = 42
+        obs["comms"]["latency_ms"] = max(obs["comms"].get("latency_ms", 0), 620)
+    else:
+        sequence_delta = int(params.get("sequence_delta", -13))
+        obs["c2_message"]["sequence_number"] = max(0, obs["c2_message"]["sequence_number"] + sequence_delta)
+        obs["time"]["received_timestamp"] += int(params.get("timestamp_delta_s", -400))
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        obs["comms"]["latency_ms"] = 850
+        obs["comms"]["packet_loss"] = 0.12
+        obs["comms"]["packet_interval_jitter_ms"] = 460
+        obs["comms"]["ack_delay_ms"] = 950
+        obs["comms"]["heartbeat_gap_ms"] = 3200

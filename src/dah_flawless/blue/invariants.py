@@ -62,9 +62,13 @@ def analyze_invariants(
 
     command_tags = {
         "SEQUENCE_REGRESSION",
+        "SEQUENCE_GAP",
         "TIMESTAMP_SKEW",
         "REPLAY_SUSPECTED",
         "COMMAND_TIMING_INCONSISTENT",
+        "PACKET_INTERVAL_ANOMALY",
+        "HEARTBEAT_GAP",
+        "ACK_TIMING_ANOMALY",
     }.intersection(tag_set)
     if command_tags:
         confidence = _confidence(0.78, command_tags, capabilities, "time_validation")
@@ -74,8 +78,8 @@ def analyze_invariants(
                 confidence=confidence,
                 tags=tuple(sorted(command_tags)),
                 evidence=(
-                    "message sequence and received timestamp disagree",
-                    "observed timing pattern is consistent with replay or desynchronization",
+                    "message sequence, timestamp, heartbeat, and ack timing are not mutually consistent",
+                    "observed channel shape is consistent with replay, delay, drop, or desynchronization",
                 ),
             )
         )

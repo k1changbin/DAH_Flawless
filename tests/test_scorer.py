@@ -34,6 +34,22 @@ class ScorerTests(unittest.TestCase):
 
         self.assertEqual(score.winner, "RED_ATTRITION")
 
+    def test_detection_window_uses_recent_threat_history(self):
+        attack = get_attack("TELEMETRY_FDI")
+        pre = create_baseline_state(seed=1)
+        post = create_baseline_state(seed=1)
+        pre["blue_observed"]["telemetry"]["battery_percent"] = 82
+        pre["blue_observed"]["telemetry"]["motor_status"] = "OK"
+
+        class FakeThreat:
+            target = "telemetry"
+            confidence = 0.9
+
+        score = score_round(pre, post, attack, threats=[], actions=[], threat_history=[[FakeThreat()]])
+
+        self.assertTrue(score.detection_success)
+        self.assertEqual(score.evidence["detection_window"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

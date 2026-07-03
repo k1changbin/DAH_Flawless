@@ -1,0 +1,491 @@
+schema_id: dah.raw_world.v0_1
+purpose: >
+  Catalog of raw world data for the DAH red/blue simulation. A raw world value
+  is a shared external battlefield fact, emission, field, object signature, or
+  transmitted frame that multiple actors could in principle receive. It is not
+  a per-vehicle internal sensor estimate.
+
+principles:
+  world_definition:
+    - "External physical reality, emitted signals, message frames, fields, and scene signatures."
+    - "Unfriendly to AI by default: raw bytes, windows, measurements, schedules, and source geometry."
+    - "Not already interpreted as a tactical situation tag."
+  observe_definition:
+    - "Per-receiver interpretation of world through its antenna, camera, GNSS receiver, filters, packet parsers, and local sensors."
+    - "May contain loss, delay, distortion, spoofing, or local computation errors."
+  not_world:
+    - "A UAV's private battery truth unless it is transmitted in an external frame."
+    - "A flight controller's internal mode unless it is externally emitted."
+    - "A receiver's computed GNSS position."
+    - "A Blue/Red tag such as C2_PATTERN_CANDIDATE."
+
+top_level_domains:
+  - time_reference
+  - mission_space
+  - terrain_field
+  - weather_field
+  - gnss_field
+  - rf_spectrum
+  - uav_c2_emissions
+  - ugv_relay_emissions
+  - satcom_emissions
+  - remote_id_broadcasts
+  - adsb_or_transponder_broadcasts
+  - physical_scene
+  - eo_ir_scene
+  - radar_lidar_reflection_field
+  - acoustic_thermal_field
+  - interference_sources
+  - cyber_message_surface
+  - raw_capture_refs
+
+raw_world:
+  time_reference:
+    description: "Shared time and timing references present in the battlespace."
+    fields:
+      scenario_time_ms: {type: integer, unit: ms, example: 182400}
+      utc_time_unix_ms: {type: integer, unit: ms, nullable: true}
+      gnss_time_week: {type: integer, nullable: true}
+      gnss_time_tow_ms: {type: integer, unit: ms, nullable: true}
+      clock_reference_quality: {type: number, range: [0, 1], example: 0.82}
+      time_source: {type: enum, values: [GNSS, SATCOM, LOCAL_OSCILLATOR, UNKNOWN]}
+
+  mission_space:
+    description: "Geometry and constraints of the mission area, not agent decisions."
+    fields:
+      area_id: {type: string, example: "AO-NORTH-RIDGE"}
+      coordinate_frame: {type: enum, values: [WGS84, LOCAL_ENU, MGRS]}
+      targets:
+        type: array
+        item_fields:
+          id: {type: string, example: "TARGET-A"}
+          location: {type: vector, unit: deg_or_m, example: [37.112, 127.104, 0]}
+          physical_signature: {type: enum, values: [VISUAL, THERMAL, RF, RADAR, MIXED]}
+          priority_ground_truth: {type: number, range: [0, 1], note: "Scenario truth, not a receiver estimate."}
+      return_bases:
+        type: array
+        item_fields:
+          id: {type: string}
+          location: {type: vector}
+      no_fly_zones:
+        type: array
+        item_fields:
+          id: {type: string}
+          geometry_ref: {type: string, example: "geojson/nfz_01.geojson"}
+
+  terrain_field:
+    description: "Physical terrain affecting visibility, RF propagation, GNSS multipath, and mobility."
+    fields:
+      dem_ref: {type: string, example: "terrain/dem_tile_01.tif"}
+      landcover_ref: {type: string, example: "terrain/landcover.geojson"}
+      occlusion_zones:
+        type: array
+        item_fields:
+          id: {type: string}
+          geometry_ref: {type: string}
+          occlusion_severity: {type: number, range: [0, 1]}
+      multipath_zones:
+        type: array
+        item_fields:
+          id: {type: string}
+          affected_band: {type: enum, values: [GNSS_L1, GNSS_L2, C_BAND, L_BAND, S_BAND, UNKNOWN]}
+          severity: {type: number, range: [0, 1]}
+      mobility_zones:
+        type: array
+        item_fields:
+          id: {type: string}
+          slope_deg: {type: number}
+          surface_type: {type: enum, values: [ROAD, GRAVEL, MUD, SAND, ROCK, URBAN, VEGETATION]}
+
+  weather_field:
+    description: "Atmospheric and visibility conditions shared by all actors in the area."
+    fields:
+      wind_speed_mps: {type: number, unit: mps, example: 9.2}
+      wind_direction_deg: {type: number, unit: deg}
+      visibility_m: {type: number, unit: m, example: 3200}
+      precipitation_level: {type: number, range: [0, 1]}
+      fog_level: {type: number, range: [0, 1]}
+      temperature_c: {type: number, unit: C}
+      pressure_hpa: {type: number, unit: hPa, nullable: true}
+      turbulence_level: {type: number, range: [0, 1]}
+
+  gnss_field:
+    description: "GNSS signals and propagation environment before any receiver computes its own position."
+    standards_or_refs:
+      - "RINEX observation/navigation concepts"
+      - "RTCM-like raw observation concepts"
+    fields:
+      constellation_mix: {type: array, values: [GPS, GALILEO, GLONASS, BEIDOU, QZSS, SBAS]}
+      satellites:
+        type: array
+        item_fields:
+          sat_id: {type: string, example: "G12"}
+          carrier_band: {type: enum, values: [L1, L2, L5, E1, E5, UNKNOWN]}
+          signal_power_dbw: {type: number, example: -158.2}
+          cn0_dbhz_at_reference: {type: number, unit: dBHz}
+          pseudorange_m_at_reference: {type: number, unit: m}
+          carrier_phase_cycles_at_reference: {type: number, unit: cycles}
+          doppler_hz_at_reference: {type: number, unit: Hz}
+          nav_message_valid: {type: boolean}
+          ephemeris_age_sec: {type: number, unit: s}
+      ionosphere_delay_ns: {type: number, unit: ns}
+      troposphere_delay_ns: {type: number, unit: ns}
+      spoofing_or_meaconing_sources:
+        type: array
+        item_fields:
+          id: {type: string}
+          affected_band: {type: enum, values: [L1, L2, L5, MULTI, UNKNOWN]}
+          area_ref: {type: string}
+          strength: {type: number, range: [0, 1]}
+          time_bias_ns: {type: number, unit: ns}
+
+  rf_spectrum:
+    description: "Raw RF environment and emitters. Payload may be undecoded."
+    standards_or_refs:
+      - "SigMF-style capture metadata"
+      - "SDR/IQ capture practices"
+    fields:
+      noise_floor_dbm: {type: number, unit: dBm, example: -96}
+      spectrum_windows:
+        type: array
+        item_fields:
+          id: {type: string, example: "rfwin-915"}
+          center_freq_hz: {type: integer, unit: Hz, example: 915400000}
+          bandwidth_hz: {type: integer, unit: Hz, example: 250000}
+          sample_rate_hz: {type: integer, unit: Hz, nullable: true}
+          iq_ref: {type: string, nullable: true, example: "captures/rfwin-915.sigmf-data"}
+          metadata_ref: {type: string, nullable: true, example: "captures/rfwin-915.sigmf-meta"}
+      emitters:
+        type: array
+        item_fields:
+          id: {type: string, example: "sig-17"}
+          center_freq_hz: {type: integer, unit: Hz}
+          bandwidth_hz: {type: integer, unit: Hz}
+          modulation_hint: {type: enum, values: [UNKNOWN, FSK, OFDM, DSSS, FHSS, LORA_LIKE, PULSE, ANALOG]}
+          burst_period_ms: {type: number, unit: ms, nullable: true}
+          burst_width_ms: {type: number, unit: ms, nullable: true}
+          duty_cycle: {type: number, range: [0, 1], nullable: true}
+          rssi_dbm_at_reference: {type: number, unit: dBm}
+          snr_db_at_reference: {type: number, unit: dB}
+          bearing_deg_at_reference: {type: number, unit: deg, nullable: true}
+          bearing_stability: {type: number, range: [0, 1], nullable: true}
+          source_location_truth: {type: vector, nullable: true, note: "Scenario truth used by generator/scorer, not automatically observable."}
+          payload_decodable: {type: boolean}
+          suspected_role_label: {type: string, nullable: true, note: "Optional scenario label; tagger should not depend on this."}
+
+  uav_c2_emissions:
+    description: "Externally transmitted UAV/GCS command and telemetry frames. MAVLink is the default reference."
+    default_reference_protocol: MAVLink2_COMMON
+    standards_or_refs:
+      - "MAVLink common.xml"
+      - "MAVLink message signing"
+      - "MAVLink mission, command, heartbeat, telemetry, high latency protocols"
+    common_message_families:
+      presence_and_status:
+        mavlink_examples: [HEARTBEAT, SYS_STATUS, SYSTEM_TIME, TIMESYNC]
+      position_and_navigation:
+        mavlink_examples: [GPS_RAW_INT, GPS_STATUS, GLOBAL_POSITION_INT, LOCAL_POSITION_NED, VFR_HUD, NAV_CONTROLLER_OUTPUT]
+      inertial_and_attitude:
+        mavlink_examples: [ATTITUDE, HIGHRES_IMU, SCALED_IMU, SCALED_PRESSURE]
+      battery_and_power:
+        mavlink_examples: [BATTERY_STATUS, SYS_STATUS]
+      mission_and_commands:
+        mavlink_examples: [MISSION_COUNT, MISSION_ITEM_INT, MISSION_CURRENT, COMMAND_LONG, COMMAND_INT, COMMAND_ACK]
+      radio_and_link:
+        mavlink_examples: [RADIO_STATUS, HIGH_LATENCY2, LINK_NODE_STATUS]
+      identity_and_remote_id:
+        mavlink_examples: [OPEN_DRONE_ID_BASIC_ID, OPEN_DRONE_ID_LOCATION, OPEN_DRONE_ID_SYSTEM]
+    frame_fields:
+      emission_id: {type: string}
+      tx_time_ms: {type: integer, unit: ms}
+      source_role: {type: enum, values: [UAV, GCS, RELAY, PAYLOAD, UNKNOWN]}
+      source_system_id: {type: integer, range: [0, 255], nullable: true}
+      source_component_id: {type: integer, range: [0, 255], nullable: true}
+      target_system_id: {type: integer, range: [0, 255], nullable: true}
+      target_component_id: {type: integer, range: [0, 255], nullable: true}
+      channel_hint: {type: enum, values: [LOS_RF, BLOS_SATCOM, MESH_RELAY, WIRED_TEST, UNKNOWN]}
+      protocol: {type: enum, values: [MAVLINK1, MAVLINK2, MAVLINK_LIKE, UNKNOWN]}
+      message_name: {type: string, example: "HEARTBEAT"}
+      message_id: {type: integer, nullable: true}
+      sequence_number: {type: integer, nullable: true}
+      payload_bytes_ref: {type: string, nullable: true}
+      decoded_payload: {type: object, nullable: true, note: "Value exactly as transmitted, not trusted internal truth."}
+      checksum_or_crc_ok_at_emission: {type: boolean, nullable: true}
+      signed: {type: boolean, nullable: true}
+      signature_present: {type: boolean, nullable: true}
+      link_rssi_dbm_at_reference: {type: number, nullable: true}
+
+  ugv_relay_emissions:
+    description: "RF/network emissions from ground relay nodes, mesh nodes, or robotic ground vehicles."
+    fields:
+      relay_beacons:
+        type: array
+        item_fields:
+          emission_id: {type: string}
+          node_id: {type: string}
+          tx_time_ms: {type: integer, unit: ms}
+          center_freq_hz: {type: integer, unit: Hz}
+          beacon_period_ms: {type: number, unit: ms}
+          rssi_dbm_at_reference: {type: number, unit: dBm}
+          relay_role_hint: {type: enum, values: [MESH_NODE, SATCOM_GATEWAY, UAV_RELAY, GCS_RELAY, UNKNOWN]}
+      forwarded_frames:
+        type: array
+        item_fields:
+          emission_id: {type: string}
+          original_frame_ref: {type: string}
+          relay_node_id: {type: string}
+          forward_time_ms: {type: integer, unit: ms}
+          channel_hint: {type: enum, values: [MESH, LOS_RF, SATCOM, UNKNOWN]}
+
+  satcom_emissions:
+    description: "Satellite or BLOS communication field and emitted frames, before a receiver's link estimation."
+    fields:
+      link_windows:
+        type: array
+        item_fields:
+          id: {type: string}
+          satellite_hint: {type: string, nullable: true}
+          uplink_or_downlink: {type: enum, values: [UPLINK, DOWNLINK, CROSS_LINK, UNKNOWN]}
+          carrier_band: {type: enum, values: [L, S, C, X, Ku, Ka, UNKNOWN]}
+          propagation_delay_ms: {type: number, unit: ms}
+          doppler_shift_hz: {type: number, unit: Hz, nullable: true}
+          rain_fade_score: {type: number, range: [0, 1]}
+          availability_score: {type: number, range: [0, 1]}
+      frames:
+        type: array
+        item_fields:
+          frame_id: {type: string}
+          tx_time_ms: {type: integer, unit: ms}
+          payload_ref: {type: string, nullable: true}
+          bearer_protocol_hint: {type: enum, values: [IP, MAVLINK_TUNNEL, PROPRIETARY, UNKNOWN]}
+
+  remote_id_broadcasts:
+    description: "Drone identification broadcasts present in the air."
+    standards_or_refs:
+      - "FAA Remote ID / Open Drone ID concepts"
+    fields:
+      broadcasts:
+        type: array
+        item_fields:
+          id: {type: string}
+          tx_time_ms: {type: integer, unit: ms}
+          uas_id_type: {type: string, nullable: true}
+          uas_id_hash_or_value: {type: string, nullable: true}
+          declared_location: {type: vector, nullable: true}
+          declared_velocity: {type: vector, nullable: true}
+          declared_heading_deg: {type: number, nullable: true}
+          emergency_status: {type: string, nullable: true}
+
+  adsb_or_transponder_broadcasts:
+    description: "Cooperative aviation-like broadcasts if present in the scenario."
+    fields:
+      broadcasts:
+        type: array
+        item_fields:
+          id: {type: string}
+          tx_time_ms: {type: integer, unit: ms}
+          icao_or_track_id: {type: string, nullable: true}
+          declared_position: {type: vector, nullable: true}
+          declared_altitude_m: {type: number, nullable: true}
+          declared_velocity_mps: {type: vector, nullable: true}
+
+  physical_scene:
+    description: "Objects and physical signatures in the battlespace. These are scene truth and emission/reflection sources."
+    fields:
+      objects:
+        type: array
+        item_fields:
+          object_id: {type: string}
+          object_type: {type: enum, values: [FRIENDLY_UAV, FRIENDLY_UGV, ENEMY_UAV, UNKNOWN_AIR, UNKNOWN_GROUND, TARGET, CIVILIAN, DECOY]}
+          trajectory_ref: {type: string, nullable: true}
+          position_truth: {type: vector, unit: deg_or_m, nullable: true}
+          velocity_truth_mps: {type: vector, unit: mps, nullable: true}
+          visual_signature_score: {type: number, range: [0, 1]}
+          thermal_signature_score: {type: number, range: [0, 1]}
+          radar_cross_section_hint: {type: number, nullable: true}
+          rf_emission_refs: {type: array, item_type: string}
+
+  eo_ir_scene:
+    description: "Light/thermal scene before a particular camera samples it."
+    fields:
+      illumination_level: {type: number, range: [0, 1]}
+      sun_angle_deg: {type: number, nullable: true}
+      obscurant_zones:
+        type: array
+        item_fields:
+          id: {type: string}
+          geometry_ref: {type: string}
+          obscurant_type: {type: enum, values: [FOG, SMOKE, DUST, RAIN, GLARE]}
+          severity: {type: number, range: [0, 1]}
+      thermal_contrast_map_ref: {type: string, nullable: true}
+
+  radar_lidar_reflection_field:
+    description: "Scene reflectivity before any radar/lidar receiver creates a point cloud."
+    fields:
+      reflectivity_map_ref: {type: string, nullable: true}
+      clutter_level: {type: number, range: [0, 1]}
+      moving_reflectors:
+        type: array
+        item_fields:
+          id: {type: string}
+          position_truth: {type: vector, nullable: true}
+          velocity_truth_mps: {type: vector, nullable: true}
+          reflectivity_score: {type: number, range: [0, 1]}
+
+  acoustic_thermal_field:
+    description: "Optional non-RF signatures that can be sensed by some platforms."
+    fields:
+      acoustic_sources:
+        type: array
+        item_fields:
+          id: {type: string}
+          source_type: {type: enum, values: [ROTOR, ENGINE, EXPLOSION, UNKNOWN]}
+          location_truth: {type: vector, nullable: true}
+          spectral_hint: {type: string, nullable: true}
+          intensity_score: {type: number, range: [0, 1]}
+      thermal_sources:
+        type: array
+        item_fields:
+          id: {type: string}
+          location_truth: {type: vector, nullable: true}
+          intensity_score: {type: number, range: [0, 1]}
+
+  interference_sources:
+    description: "Physical interference or deception sources in the common environment."
+    fields:
+      sources:
+        type: array
+        item_fields:
+          id: {type: string}
+          source_type: {type: enum, values: [GNSS_JAMMER, GNSS_SPOOFER, RF_JAMMER, NOISE_SOURCE, DECOY_EMITTER, UNKNOWN]}
+          affected_bands: {type: array, item_type: string}
+          location_truth: {type: vector, nullable: true}
+          active_window_ms: {type: vector, example: [180000, 210000]}
+          strength_score: {type: number, range: [0, 1]}
+          pattern: {type: enum, values: [CONSTANT, BURSTY, SWEEPING, REACTIVE, UNKNOWN]}
+
+  cyber_message_surface:
+    description: "Message-level fields as transmitted over the air or relay medium, not receiver validation results."
+    fields:
+      emitted_packets:
+        type: array
+        item_fields:
+          packet_id: {type: string}
+          tx_time_ms: {type: integer, unit: ms}
+          medium: {type: enum, values: [LOS_RF, SATCOM, MESH_RF, WIFI, LTE_5G, WIRED_TEST, UNKNOWN]}
+          l2_hint: {type: enum, values: [UNKNOWN, ETHERNET, WIFI, LTE, CUSTOM_RADIO]}
+          l3_hint: {type: enum, values: [NONE, IPV4, IPV6, UNKNOWN]}
+          l4_hint: {type: enum, values: [NONE, UDP, TCP, QUIC, UNKNOWN]}
+          src_addr: {type: string, nullable: true}
+          dst_addr: {type: string, nullable: true}
+          src_port: {type: integer, nullable: true}
+          dst_port: {type: integer, nullable: true}
+          app_protocol_hint: {type: enum, values: [MAVLINK, ROS2_DDS, MQTT, HTTP, GRPC, PROPRIETARY, UNKNOWN]}
+          app_sequence: {type: integer, nullable: true}
+          app_timestamp_ms: {type: integer, nullable: true}
+          payload_bytes_ref: {type: string, nullable: true}
+          decoded_summary: {type: object, nullable: true}
+
+  raw_capture_refs:
+    description: "External artifacts used by the scenario generator or report evidence."
+    fields:
+      captures:
+        type: array
+        item_fields:
+          id: {type: string}
+          artifact_type: {type: enum, values: [SIGMF_IQ, RINEX_OBS, RINEX_NAV, PCAP, MAVLINK_LOG, VIDEO, POINTCLOUD, GEOJSON, DEM, WEATHER_LOG]}
+          path_or_uri: {type: string}
+          time_window_ms: {type: vector, nullable: true}
+          notes: {type: string, nullable: true}
+
+derived_feature_groups:
+  description: "Features extracted from raw_world before Situation Tagger."
+  rf_features:
+    - burst_period_ms
+    - burst_width_ms
+    - duty_cycle
+    - rssi_trend
+    - snr_trend
+    - bearing_stability
+    - emitter_persistence
+    - c2_pattern_score
+  gnss_features:
+    - avg_cn0_dbhz
+    - satellite_visibility_score
+    - doppler_consistency
+    - pseudorange_residual_score
+    - multipath_score
+    - interference_score
+  mavlink_c2_features:
+    - heartbeat_period_ms
+    - message_rate_by_type
+    - sequence_gap_rate
+    - command_burst_density
+    - timesync_skew_ms
+    - mission_protocol_activity
+    - signing_presence_rate
+  satcom_features:
+    - propagation_delay_ms
+    - delay_jitter_score
+    - availability_score
+    - rain_fade_score
+    - burst_loss_score
+  scene_features:
+    - object_approach_rate
+    - target_line_of_sight_score
+    - terrain_occlusion_score
+    - visual_contrast_score
+    - thermal_contrast_score
+
+example_minimal_world:
+  time_reference:
+    scenario_time_ms: 182400
+    time_source: GNSS
+    clock_reference_quality: 0.82
+  mission_space:
+    area_id: "AO-NORTH-RIDGE"
+    coordinate_frame: WGS84
+    targets:
+      - {id: "TARGET-A", location: [37.112, 127.104, 0], physical_signature: MIXED, priority_ground_truth: 0.82}
+    return_bases:
+      - {id: "BASE-1", location: [37.080, 127.060, 0]}
+    no_fly_zones: []
+  weather_field:
+    wind_speed_mps: 9.2
+    wind_direction_deg: 270
+    visibility_m: 3200
+    precipitation_level: 0.1
+    fog_level: 0.2
+    temperature_c: 3
+    turbulence_level: 0.32
+  rf_spectrum:
+    noise_floor_dbm: -96
+    spectrum_windows:
+      - {id: "rfwin-915", center_freq_hz: 915400000, bandwidth_hz: 250000, sample_rate_hz: 2000000, iq_ref: "captures/rfwin-915.sigmf-data", metadata_ref: "captures/rfwin-915.sigmf-meta"}
+    emitters:
+      - {id: "sig-17", center_freq_hz: 915400000, bandwidth_hz: 250000, modulation_hint: FSK, burst_period_ms: 2400, burst_width_ms: 180, duty_cycle: 0.075, rssi_dbm_at_reference: -68, snr_db_at_reference: 18.7, bearing_deg_at_reference: 42, bearing_stability: 0.86, source_location_truth: [37.116, 127.098, 390], payload_decodable: false, suspected_role_label: "enemy_uav_c2"}
+  gnss_field:
+    constellation_mix: [GPS, GALILEO]
+    satellites:
+      - {sat_id: "G12", carrier_band: L1, signal_power_dbw: -158.2, cn0_dbhz_at_reference: 38.5, pseudorange_m_at_reference: 21423871.2, carrier_phase_cycles_at_reference: 120481.2, doppler_hz_at_reference: -1240.4, nav_message_valid: true, ephemeris_age_sec: 2200}
+    ionosphere_delay_ns: 8.5
+    troposphere_delay_ns: 2.2
+    spoofing_or_meaconing_sources: []
+  uav_c2_emissions:
+    frame_fields:
+      emission_id: "mav-000712"
+      tx_time_ms: 182390
+      source_role: UAV
+      source_system_id: 1
+      source_component_id: 1
+      target_system_id: 255
+      target_component_id: 0
+      channel_hint: BLOS_SATCOM
+      protocol: MAVLINK2
+      message_name: HEARTBEAT
+      message_id: 0
+      sequence_number: 1042
+      decoded_payload: {type: "MAV_TYPE_QUADROTOR", autopilot: "MAV_AUTOPILOT_ARDUPILOTMEGA", base_mode: 81, system_status: "MAV_STATE_ACTIVE"}
+      signed: true
+      signature_present: true
+      link_rssi_dbm_at_reference: -72

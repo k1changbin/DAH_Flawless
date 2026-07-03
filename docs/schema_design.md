@@ -1,22 +1,42 @@
-# World and Observed Schema Design
+# Scorer Truth and Observed Schema Design
 
-이 문서는 예선 MVP에서 사용할 `world`와 `blue_observed`의 JSON schema 초안이다. 공개 GNSS 규격, MAVLink 메시지 구조, 메시지 서명/인증 개념을 바탕으로 관측 가능한 값만 포함한다.
+이 문서는 MVP runtime state의 JSON 구조를 설명한다. raw world의 원천 schema는 별도 문서인 [raw_world_schema.md](raw_world_schema.md)와 [../configs/raw_world_schema.yaml](../configs/raw_world_schema.yaml)을 기준으로 한다.
 
 ## 1. 설계 원칙
 
 ```text
-world
-= 실제 상태, scorer only
+raw_world
+= 현실 원천 신호/환경/방출
+= generator/extractor/adapter 입력
+
+scorer_truth
+= scorer/admin만 보는 채점 기준 상태
+= 현재 코드에서는 호환성 때문에 state["world"]에 저장
 
 blue_observed
-= Blue 관제 AI가 수신한 값
-= 공격, 지연, replay, 센서 오류로 world와 달라질 수 있음
-
-meta
-= observed가 어떤 경로와 품질로 들어왔는지 판단하는 신뢰 단서
+= Blue AI가 받은 관측 입력
+= Red mutation, 지연, replay, 센서 오류로 scorer_truth와 달라질 수 있음
 ```
 
-## 2. World Schema
+## 2. Runtime State Top Level
+
+```json
+{
+  "round": 1,
+  "seed": 42,
+  "scenario": "raw_world_start",
+  "world": {},
+  "blue_observed": {},
+  "mission": {},
+  "capabilities": {},
+  "defense_runtime": {},
+  "last_known_good": {}
+}
+```
+
+주의: 위의 `world` 키는 historical compatibility key다. 문서와 보고서에서는 `scorer_truth(state["world"])`라고 부른다.
+
+## 3. Scorer Truth Schema
 
 ```json
 {
@@ -41,12 +61,7 @@ meta
       "heading_deg": 91,
       "battery_percent": 20,
       "battery_drain_rate": 1.0,
-      "motor_status": "FAULT",
-      "imu_accel": {
-        "x": 0.1,
-        "y": 0.0,
-        "z": 9.8
-      }
+      "motor_status": "FAULT"
     },
     "mission": {
       "current_area": "A",
@@ -60,12 +75,14 @@ meta
     "command": {
       "expected_sequence_number": 1021,
       "last_valid_command": "RETURN_TO_BASE"
-    }
+    },
+    "raw_world_hash": "optional_raw_world_sample_hash",
+    "raw_world_feature_scores": {}
   }
 }
 ```
 
-## 3. Blue Observed Schema
+## 4. Blue Observed Schema
 
 ```json
 {
@@ -83,11 +100,6 @@ meta
       "heading_deg": 91
     },
     "navigation": {
-      "gnss_position": {
-        "lat": 37.128,
-        "lon": 127.460,
-        "altitude_m": 181
-      },
       "gnss_fix_quality": "DEGRADED",
       "satellite_count": 4,
       "hdop": 6.2,
@@ -111,9 +123,18 @@ meta
       "sysid": 1,
       "compid": 1,
       "msgid": 76,
+      "message_role": "COMMAND",
+      "sequence_visible": true,
+      "timestamp_visible": true,
+      "metadata_plaintext": true,
       "checksum_valid": true,
       "signature_present": true,
-      "auth_valid": true
+      "auth_valid": true,
+      "ack": {
+        "visible": true,
+        "sequence_number": 1008,
+        "status": "ACCEPTED"
+      }
     },
     "comms": {
       "channel": "SATCOM",
@@ -122,41 +143,32 @@ meta
       "latency_ms": 850,
       "packet_loss": 0.12,
       "message_queue_depth": 12,
-      "request_rate": 20
+      "packet_interval_ms": 1000,
+      "ack_visible": true,
+      "ack_delay_ms": 210,
+      "anti_replay_window_s": 180
     }
   }
 }
 ```
 
-## 4. 필드별 출처 연결
+## 5. 공격 3종이 반드시 쓰는 필드
 
-각 필드의 타입, 단위, 범위, enum 값은 [field_formats.md](field_formats.md)를 기준으로 한다.
-
-| 필드 그룹 | 대표 필드 | 근거 |
+| 공격 | scorer_truth 기준 | observed 조작 대상 |
 |---|---|---|
-| GNSS/PNT | `gnss_position`, `satellite_count`, `hdop`, `cn0_avg`, `received_timestamp` | NAVCEN GPS Interface Specification |
-| UAV telemetry | `battery_percent`, `motor_status`, `altitude_m`, `speed_mps` | MAVLink 메시지/텔레메트리 구조 |
-| C2 message | `sequence_number`, `sysid`, `compid`, `msgid`, `checksum_valid` | MAVLink Packet Serialization |
-| Signing/Auth | `signature_present`, `auth_valid`, `timestamp` | MAVLink Message Signing |
-| Network meta | `latency_ms`, `packet_loss`, `message_queue_depth`, `request_rate` | 통신 관측 메타데이터 |
-| Mission | `area_priority`, `recommended_area`, `return_required` | 프로젝트 공격 시나리오 |
+| `TELEMETRY_FDI` | `state["world"].uav.battery_percent`, `motor_status` | `blue_observed.telemetry.*` |
+| `PRIORITY_POISONING` | `state["world"].mission.area_priority` | `blue_observed.mission.area_priority` |
+| `TIME_DESYNC_REPLAY` | `state["world"].command.*`, `state["world"].time.true_timestamp` | `blue_observed.c2_message.*`, `blue_observed.time.received_timestamp` |
 
-## 5. MVP에서 반드시 필요한 필드
+## 6. Raw World 시작 상태
 
-최소 구현은 아래 필드만 있어도 공격 3종을 증명할 수 있다.
+raw world sample을 사용하면 아래 흐름으로 runtime state가 만들어진다.
 
 ```text
-world.uav.battery_percent
-world.uav.motor_status
-world.mission.area_priority
-world.command.expected_sequence_number
-world.time.true_timestamp
-
-blue_observed.telemetry.battery_percent
-blue_observed.telemetry.motor_status
-blue_observed.mission.area_priority
-blue_observed.c2_message.sequence_number
-blue_observed.time.received_timestamp
-blue_observed.comms.latency_ms
-blue_observed.c2_message.auth_valid
+scripts/run_world_generator.py
+-> src/dah_flawless/world/feature_extractor.py
+-> src/dah_flawless/world/state_adapter.py
+-> run_simulation(initial_state=...)
 ```
+
+로그에는 `raw_world_source_hash`, `raw_world_feature_scores`, `truth_model`, `truth_storage_key`가 남는다.

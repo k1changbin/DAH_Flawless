@@ -1,6 +1,6 @@
 # Reference Sources for Preliminary Report
 
-이 문서는 예선 보고서에서 world/observed/schema/tag 설계의 근거로 사용할 공개 자료를 정리한다. 목적은 실제 침투 방법을 학습하는 것이 아니라, 공개 표준과 보안 프레임워크를 바탕으로 관측 가능한 값과 탐지 태그를 정의하는 것이다.
+이 문서는 예선 보고서에서 raw_world/scorer_truth/observed/schema/tag 설계의 근거로 사용할 공개 자료를 정리한다. 목적은 실제 침투 방법을 학습하는 것이 아니라, 공개 표준과 보안 프레임워크를 바탕으로 관측 가능한 값과 탐지 태그를 정의하는 것이다.
 
 ## 1. GPS/GNSS 신호 근거
 

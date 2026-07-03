@@ -22,7 +22,7 @@ def redact_state(state: dict) -> dict:
 def assert_no_world(value: Any) -> None:
     if isinstance(value, dict):
         if "world" in value:
-            raise AssertionError("redacted state leaked world")
+            raise AssertionError('redacted state leaked scorer truth key "world"')
         for nested in value.values():
             assert_no_world(nested)
     elif isinstance(value, list):

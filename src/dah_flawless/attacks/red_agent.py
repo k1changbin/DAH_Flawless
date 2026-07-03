@@ -13,8 +13,9 @@ from __future__ import annotations
 import random
 
 from dah_flawless.attacks.catalog import get_attack, realistic_attacks
+from dah_flawless.attacks.selector import build_tactic, score_attack_candidates
 from dah_flawless.config import DEFAULT_STEALTH_MODE, SCRIPTED_ATTACKS
-from dah_flawless.schemas import Attack, decision
+from dah_flawless.schemas import Attack, SituationTag, decision
 
 
 class RedAgent:
@@ -32,28 +33,35 @@ class RedAgent:
         self._telemetry_probe_delta = 24
 
     def choose_attack(
-        self, round_number: int, observed_state: dict, tags: list[str]
+        self,
+        round_number: int,
+        observed_state: dict,
+        tags: list[str],
+        tag_details: list[SituationTag] | None = None,
     ) -> tuple[Attack, bool, dict, dict]:
         if round_number <= len(self._scripted_attacks):
             attack = get_attack(self._scripted_attacks[round_number - 1])
             stealth = self._use_stealth(attack.name)
-            tactic = self._build_tactic(attack.name, stealth)
+            tactic = self._build_tactic(attack.name, stealth, tag_details)
             log = decision(
                 "RedAgent",
                 "attack_selected",
                 "scripted_mvp_coverage",
-                before=None,
-                after={"attack": attack.name, "stealth": stealth, "tactic": tactic},
+                before=_tag_context(tags, tag_details),
+                after={
+                    "attack": attack.name,
+                    "stealth": stealth,
+                    "tactic": tactic,
+                    "attack_candidate_scores": score_attack_candidates(
+                        realistic_attacks(), self._weights, tag_details
+                    ),
+                },
             )
             return attack, stealth, tactic, log
 
-        weighted = []
-        tag_set = set(tags)
-        for attack in realistic_attacks():
-            weight = self._weights[attack.name]
-            if tag_set.intersection(attack.preferred_tags):
-                weight *= 3
-            weighted.append((attack, max(weight, 0.0)))
+        attack_candidates = score_attack_candidates(realistic_attacks(), self._weights, tag_details)
+        attacks_by_name = {attack.name: attack for attack in realistic_attacks()}
+        weighted = [(attacks_by_name[candidate["attack"]], max(candidate["score"], 0.0)) for candidate in attack_candidates]
 
         total = sum(weight for _, weight in weighted)
         pick = self._rng.uniform(0.0, total)
@@ -68,13 +76,18 @@ class RedAgent:
                 break
 
         stealth = self._use_stealth(chosen.name)
-        tactic = self._build_tactic(chosen.name, stealth)
+        tactic = self._build_tactic(chosen.name, stealth, tag_details)
         log = decision(
             "RedAgent",
             "attack_selected",
             reason,
-            before=tags,
-            after={"attack": chosen.name, "stealth": stealth, "tactic": tactic},
+            before=_tag_context(tags, tag_details),
+            after={
+                "attack": chosen.name,
+                "stealth": stealth,
+                "tactic": tactic,
+                "attack_candidate_scores": attack_candidates,
+            },
         )
         return chosen, stealth, tactic, log
 
@@ -85,16 +98,13 @@ class RedAgent:
             return False
         return attack_name in self._stealth_for  # adaptive
 
-    def _build_tactic(self, attack_name: str, stealth: bool) -> dict:
-        if not stealth:
-            return {"stealth": False, "strategy": "loud"}
-        if attack_name == "TELEMETRY_FDI":
-            return {
-                "stealth": True,
-                "strategy": "boundary_probe",
-                "probe_delta": self._telemetry_probe_delta,
-            }
-        return {"stealth": True, "strategy": "no_boundary_margin"}
+    def _build_tactic(
+        self,
+        attack_name: str,
+        stealth: bool,
+        tag_details: list[SituationTag] | None,
+    ) -> dict:
+        return build_tactic(attack_name, stealth, tag_details, self._telemetry_probe_delta)
 
     def update_weight(self, attack_name: str, detected: bool) -> dict:
         before = self._weights.get(attack_name, 0.0)
@@ -115,3 +125,10 @@ class RedAgent:
             before=before,
             after={"weight": after, "telemetry_probe_delta": self._telemetry_probe_delta},
         )
+
+
+def _tag_context(tags: list[str], tag_details: list[SituationTag] | None) -> dict:
+    return {
+        "tags": tags,
+        "tag_details": [detail.to_dict() for detail in tag_details or []],
+    }

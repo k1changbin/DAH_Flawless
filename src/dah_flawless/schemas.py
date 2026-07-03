@@ -39,6 +39,19 @@ class Threat:
 
 
 @dataclass(frozen=True)
+class SituationTag:
+    tag: str
+    confidence: float
+    evidence: tuple[str, ...]
+    meaning: str
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["evidence"] = list(self.evidence)
+        return data
+
+
+@dataclass(frozen=True)
 class DefenseAction:
     action: str
     target: str

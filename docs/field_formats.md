@@ -1,6 +1,14 @@
 # Field Format Reference
 
-이 문서는 `world`, `blue_observed`, `tag`, `score/log`에 들어가는 각 값의 형식, 단위, 범위, 예시를 정의한다. 구현할 때는 이 표를 기준으로 dataclass 또는 JSON schema를 만든다.
+이 문서는 runtime state의 `world`, `blue_observed`, `tag`, `score/log`에 들어가는 각 값의 형식, 단위, 범위, 예시를 정의한다. 구현할 때는 이 표를 기준으로 dataclass 또는 JSON schema를 만든다.
+
+용어 주의:
+
+```text
+이 문서의 world.* 경로는 현재 코드 호환 키 state["world"]를 뜻한다.
+의미상 이름은 scorer_truth.* 이며, raw_world 원천 신호 schema가 아니다.
+raw_world 필드는 docs/raw_world_schema.md와 configs/raw_world_schema.yaml을 기준으로 한다.
+```
 
 ## 1. 기본 타입 규칙
 
@@ -16,36 +24,36 @@
 | `lat/lon` | WGS84 decimal degrees | `37.123`, `127.456` |
 | `tag` | 대문자 snake case 문자열 | `"GNSS_DEGRADED"` |
 
-## 2. World Field Formats
+## 2. Scorer Truth Field Formats
 
 ### 2.1 Time
 
 | 경로 | 타입 | 단위/범위 | 예시 | 의미 |
 |---|---|---|---|---|
-| `world.time.true_timestamp` | `timestamp` | Unix seconds | `1710001200` | 실제 기준 시간 |
+| `world.time.true_timestamp` | `timestamp` | Unix seconds | `1710001200` | scorer truth 기준 시간 |
 | `world.time.round` | `int` | 0 이상 | `3` | 시뮬레이션 라운드 |
 
 ### 2.2 Environment
 
 | 경로 | 타입 | 단위/범위 | 예시 | 의미 |
 |---|---|---|---|---|
-| `world.environment.weather` | enum string | `CLEAR`, `RAIN`, `FOG`, `WIND`, `STORM` | `"CLEAR"` | 실제 기상 |
-| `world.environment.terrain` | enum string | `OPEN`, `URBAN`, `LOW_MOUNTAIN`, `COASTAL` | `"LOW_MOUNTAIN"` | 실제 지형 |
-| `world.environment.rf_noise_level` | `ratio` | 0.0~1.0 | `0.21` | 실제 전파 잡음 수준 |
-| `world.environment.gnss_interference` | enum string | `NONE`, `JAMMING`, `SPOOFING`, `MULTIPATH`, `UNKNOWN` | `"NONE"` | 실제 GNSS 간섭 상태 |
+| `world.environment.weather` | enum string | `CLEAR`, `RAIN`, `FOG`, `WIND`, `STORM` | `"CLEAR"` | scorer truth 기상 |
+| `world.environment.terrain` | enum string | `OPEN`, `URBAN`, `LOW_MOUNTAIN`, `COASTAL` | `"LOW_MOUNTAIN"` | scorer truth 지형 |
+| `world.environment.rf_noise_level` | `ratio` | 0.0~1.0 | `0.21` | raw_world에서 해석된 전파 잡음 수준 |
+| `world.environment.gnss_interference` | enum string | `NONE`, `JAMMING`, `SPOOFING`, `MULTIPATH`, `UNKNOWN` | `"NONE"` | raw_world에서 해석된 GNSS 간섭 상태 |
 
 ### 2.3 UAV
 
 | 경로 | 타입 | 단위/범위 | 예시 | 의미 |
 |---|---|---|---|---|
-| `world.uav.position.lat` | `float` | -90~90 degrees | `37.123` | 실제 위도 |
-| `world.uav.position.lon` | `float` | -180~180 degrees | `127.456` | 실제 경도 |
-| `world.uav.position.altitude_m` | `float` | meters | `180` | 실제 고도 |
-| `world.uav.speed_mps` | `float` | meters/second, 0 이상 | `42` | 실제 속도 |
-| `world.uav.heading_deg` | `float` | 0~359.999 degrees | `91` | 실제 진행 방향 |
-| `world.uav.battery_percent` | `percent` | 0~100 | `20` | 실제 배터리 잔량 |
-| `world.uav.battery_drain_rate` | `float` | percent/round 또는 percent/min | `1.0` | 실제 배터리 소모율 |
-| `world.uav.motor_status` | enum string | `OK`, `DEGRADED`, `FAULT`, `UNKNOWN` | `"FAULT"` | 실제 모터 상태 |
+| `world.uav.position.lat` | `float` | -90~90 degrees | `37.123` | scorer truth 위도 |
+| `world.uav.position.lon` | `float` | -180~180 degrees | `127.456` | scorer truth 경도 |
+| `world.uav.position.altitude_m` | `float` | meters | `180` | scorer truth 고도 |
+| `world.uav.speed_mps` | `float` | meters/second, 0 이상 | `42` | scorer truth 속도 |
+| `world.uav.heading_deg` | `float` | 0~359.999 degrees | `91` | scorer truth 진행 방향 |
+| `world.uav.battery_percent` | `percent` | 0~100 | `20` | scorer truth 배터리 잔량 |
+| `world.uav.battery_drain_rate` | `float` | percent/round 또는 percent/min | `1.0` | scorer truth 배터리 소모율 |
+| `world.uav.motor_status` | enum string | `OK`, `DEGRADED`, `FAULT`, `UNKNOWN` | `"FAULT"` | scorer truth 모터 상태 |
 | `world.uav.imu_accel.x` | `float` | m/s^2 | `0.1` | 실제 x축 가속도 |
 | `world.uav.imu_accel.y` | `float` | m/s^2 | `0.0` | 실제 y축 가속도 |
 | `world.uav.imu_accel.z` | `float` | m/s^2 | `9.8` | 실제 z축 가속도 |
@@ -54,11 +62,11 @@
 
 | 경로 | 타입 | 단위/범위 | 예시 | 의미 |
 |---|---|---|---|---|
-| `world.mission.current_area` | enum string | `A`, `B`, `C` | `"A"` | 실제 현재 임무 구역 |
-| `world.mission.area_priority.A` | `ratio` | 0.0~1.0 | `0.9` | A구역 실제 우선순위 |
-| `world.mission.area_priority.B` | `ratio` | 0.0~1.0 | `0.4` | B구역 실제 우선순위 |
-| `world.mission.area_priority.C` | `ratio` | 0.0~1.0 | `0.2` | C구역 실제 우선순위 |
-| `world.mission.return_required` | `bool` | true/false | `true` | 실제 복귀 필요 여부 |
+| `world.mission.current_area` | enum string | `A`, `B`, `C` | `"A"` | scorer truth 현재 임무 구역 |
+| `world.mission.area_priority.A` | `ratio` | 0.0~1.0 | `0.9` | A구역 scorer truth 우선순위 |
+| `world.mission.area_priority.B` | `ratio` | 0.0~1.0 | `0.4` | B구역 scorer truth 우선순위 |
+| `world.mission.area_priority.C` | `ratio` | 0.0~1.0 | `0.2` | C구역 scorer truth 우선순위 |
+| `world.mission.return_required` | `bool` | true/false | `true` | scorer truth 복귀 필요 여부 |
 
 ### 2.5 Command
 
@@ -119,9 +127,16 @@
 | `blue_observed.c2_message.sysid` | `int` | 0~255 | `1` | 송신 system id |
 | `blue_observed.c2_message.compid` | `int` | 0~255 | `1` | 송신 component id |
 | `blue_observed.c2_message.msgid` | `int` | 0 이상 | `76` | 메시지 타입 id |
+| `blue_observed.c2_message.message_role` | enum string | `COMMAND`, `STATE_UPDATE`, `HEARTBEAT`, `ACK`, `UNKNOWN` | `"COMMAND"` | 메시지 역할 추정값 |
+| `blue_observed.c2_message.sequence_visible` | `bool` | true/false | `true` | sequence 필드 관찰 가능 여부 |
+| `blue_observed.c2_message.timestamp_visible` | `bool` | true/false | `true` | timestamp/수신시간 관찰 가능 여부 |
+| `blue_observed.c2_message.metadata_plaintext` | `bool` | true/false | `true` | payload 밖 메타데이터 관찰 가능 여부 |
 | `blue_observed.c2_message.checksum_valid` | `bool` | true/false | `true` | checksum 검증 결과 |
 | `blue_observed.c2_message.signature_present` | `bool` | true/false | `true` | 메시지 서명 존재 여부 |
 | `blue_observed.c2_message.auth_valid` | `bool` | true/false | `true` | 인증/서명 검증 결과 |
+| `blue_observed.c2_message.ack.visible` | `bool` | true/false | `true` | ACK 흐름 관찰 가능 여부 |
+| `blue_observed.c2_message.ack.sequence_number` | `int` | 0 이상 | `1021` | 확인 응답이 가리키는 sequence |
+| `blue_observed.c2_message.ack.status` | enum string | `ACCEPTED`, `REJECTED`, `PENDING`, `UNKNOWN` | `"ACCEPTED"` | ACK 상태 |
 
 ### 3.6 Comms
 
@@ -134,6 +149,20 @@
 | `blue_observed.comms.packet_loss` | `ratio` | 0.0~1.0 | `0.12` | 패킷 손실률 |
 | `blue_observed.comms.message_queue_depth` | `int` | 0 이상 | `12` | 처리 대기 메시지 수 |
 | `blue_observed.comms.request_rate` | `float` | requests/second 또는 requests/round | `20` | 요청 빈도 |
+| `blue_observed.comms.packet_interval_ms` | `int` | milliseconds, 0 이상 | `1000` | 관측된 평균 패킷 주기 |
+| `blue_observed.comms.packet_interval_jitter_ms` | `int` | milliseconds, 0 이상 | `18` | 패킷 주기 흔들림 |
+| `blue_observed.comms.packet_size_bytes` | `int` | bytes, 0 이상 | `96` | 관측 패킷 크기 |
+| `blue_observed.comms.packet_size_variance` | `float` | bytes 기준 분산/변동량 | `6` | 패킷 크기 패턴 안정도 |
+| `blue_observed.comms.ack_visible` | `bool` | true/false | `true` | ACK 채널 관찰 가능 여부 |
+| `blue_observed.comms.ack_delay_ms` | `int` | milliseconds, 0 이상 | `210` | ACK 지연 |
+| `blue_observed.comms.route_metadata_visible` | `bool` | true/false | `true` | routing/sender/channel 메타데이터 관찰 가능 여부 |
+| `blue_observed.comms.state_update_dependency` | enum string | `LOW`, `MEDIUM`, `HIGH` | `"HIGH"` | 최신 상태 업데이트 의존도 |
+| `blue_observed.comms.anti_replay_window_s` | `int` | seconds, 0 이상 | `180` | 허용되는 replay 방지 시간창 추정 |
+| `blue_observed.comms.heartbeat_interval_ms` | `int` | milliseconds, 0 이상 | `1000` | 정상 heartbeat 주기 |
+| `blue_observed.comms.heartbeat_gap_ms` | `int` | milliseconds, 0 이상 | `0` | 최근 heartbeat 공백 |
+| `blue_observed.comms.crypto_profile.algorithm` | enum/string | 구현별 명칭 | `"AEAD_SIM"` | 암호 방식 추정/시뮬레이션 명칭 |
+| `blue_observed.comms.crypto_profile.nonce_reuse_suspected` | `bool` | true/false | `false` | nonce 재사용 의심 단서 |
+| `blue_observed.comms.crypto_profile.weak_cipher_hint` | `bool` | true/false | `false` | 약한 암호 설정 의심 단서 |
 
 ## 4. Mission Runtime / Defense Field Formats
 
@@ -184,6 +213,33 @@ Defense object 형식:
 | `recovery_success` | `bool` | true/false | `true` | 복구 성공 여부 |
 | `winner` | enum string | `RED_BREACH`, `RED_ATTRITION`, `BLUE`, `BLUE_RECOVERY`, `DRAW` | `"RED_BREACH"` | 라운드 판정 |
 
+Red tactic object 형식:
+
+```json
+{
+  "strategy": "ack_confusion",
+  "selector": "tag_scored_tactic_policy",
+  "matched_tags": ["ACK_CHANNEL_VISIBLE", "ACK_TIMING_ANOMALY"],
+  "score": 8.432,
+  "score_breakdown": {
+    "base_score": 1.7,
+    "impact": 2.0,
+    "tag_bonus": 5.782,
+    "detectability_penalty": 0.65,
+    "execution_cost": 0.4
+  }
+}
+```
+
+| 필드 | 타입 | 예시 | 의미 |
+|---|---|---|---|
+| `strategy` | enum string | `"replay"` | 선택된 세부 tactic |
+| `selector` | string | `"tag_scored_tactic_policy"` | 선택 방식 |
+| `matched_tags` | array of tag | `["SEQUENCE_VISIBLE"]` | tactic 선택 근거 태그 |
+| `score` | `float` | `7.875` | tactic 최종 점수 |
+| `score_breakdown` | object | `{}` | 점수 계산 근거 |
+| `candidate_scores` | array | `[]` | 비교된 tactic 후보 점수표 |
+
 ## 6. Situation Tag Format
 
 태그는 대문자 snake case 문자열 배열로 저장한다.
@@ -202,8 +258,29 @@ Defense object 형식:
 |---|---|---|
 | `GNSS_DEGRADED` | string enum | `"GNSS_DEGRADED"` |
 | `SEQUENCE_REGRESSION` | string enum | `"SEQUENCE_REGRESSION"` |
+| `SEQUENCE_VISIBLE` | string enum | `"SEQUENCE_VISIBLE"` |
+| `ACK_CHANNEL_VISIBLE` | string enum | `"ACK_CHANNEL_VISIBLE"` |
+| `PACKET_INTERVAL_ANOMALY` | string enum | `"PACKET_INTERVAL_ANOMALY"` |
 | `TELEMETRY_CONFLICT` | string enum | `"TELEMETRY_CONFLICT"` |
 | `MISSION_PRIORITY_CHANGED` | string enum | `"MISSION_PRIORITY_CHANGED"` |
+
+상세 태그는 Red AI의 Situation Tagger와 Decision Logger가 사용한다.
+
+```json
+{
+  "tag": "SEQUENCE_VISIBLE",
+  "confidence": 0.91,
+  "evidence": ["c2_message.sequence_visible=True", "c2_message.sequence_number"],
+  "meaning": "message order information can be observed"
+}
+```
+
+| 필드 | 타입 | 예시 | 의미 |
+|---|---|---|---|
+| `tag` | string enum | `"SEQUENCE_VISIBLE"` | 상황 태그명 |
+| `confidence` | `ratio` | `0.91` | 태그 판단 신뢰도 |
+| `evidence` | array of string | `["comms.ack_visible=True"]` | 태그를 만든 observed 경로와 값 |
+| `meaning` | string | `"message order information can be observed"` | 공격/방어 판단에서의 의미 |
 
 ## 7. Log Field Formats
 

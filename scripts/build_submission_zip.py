@@ -27,6 +27,8 @@ INCLUDED_ROOTS = [
     "pyproject.toml",
     "Dockerfile",
     "streamlit_app.py",
+    "configs",
+    "docs",
     "src",
     "tests",
     "data/logs",

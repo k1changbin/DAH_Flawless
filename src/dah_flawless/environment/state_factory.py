@@ -10,8 +10,9 @@ from dah_flawless.config import BASE_TIMESTAMP, DEFAULT_SCENARIO
 def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
     """Create a single-UAV reconnaissance scenario.
 
-    The world and observed values start aligned. Red mutations later change
-    only blue_observed, while scorer keeps access to world.
+    The scorer truth and observed values start aligned. Red mutations later
+    change only blue_observed, while scorer keeps access to the compatibility
+    key ``state["world"]``.
 
     scenario:
       clean_start    - full capabilities, availability 1.0 (default).
@@ -20,7 +21,7 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
                        so Blue must detect and recover from a weakened footing.
     """
 
-    world = {
+    scorer_truth = {
         "time": {"true_timestamp": BASE_TIMESTAMP, "round": 0},
         "environment": {
             "weather": "CLEAR",
@@ -74,9 +75,18 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "sysid": 1,
             "compid": 1,
             "msgid": 76,
+            "message_role": "COMMAND",
+            "sequence_visible": True,
+            "timestamp_visible": True,
+            "metadata_plaintext": True,
             "checksum_valid": True,
             "signature_present": True,
             "auth_valid": True,
+            "ack": {
+                "visible": True,
+                "sequence_number": 1021,
+                "status": "ACCEPTED",
+            },
         },
         "comms": {
             "channel": "SATCOM",
@@ -86,6 +96,22 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "packet_loss": 0.02,
             "message_queue_depth": 3,
             "request_rate": 4.0,
+            "packet_interval_ms": 1000,
+            "packet_interval_jitter_ms": 18,
+            "packet_size_bytes": 96,
+            "packet_size_variance": 6,
+            "ack_visible": True,
+            "ack_delay_ms": 210,
+            "route_metadata_visible": True,
+            "state_update_dependency": "HIGH",
+            "anti_replay_window_s": 180,
+            "heartbeat_interval_ms": 1000,
+            "heartbeat_gap_ms": 0,
+            "crypto_profile": {
+                "algorithm": "AEAD_SIM",
+                "nonce_reuse_suspected": False,
+                "weak_cipher_hint": False,
+            },
         },
     }
 
@@ -110,7 +136,7 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
         "round": 0,
         "seed": seed,
         "scenario": scenario,
-        "world": world,
+        "world": scorer_truth,
         "blue_observed": blue_observed,
         "mission": mission,
         "capabilities": capabilities,
