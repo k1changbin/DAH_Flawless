@@ -28,6 +28,10 @@ class RedAgent:
         self._scripted_attacks = scripted_attacks
         self._stealth_mode = stealth_mode
         self._weights = {attack.name: attack.weight for attack in realistic_attacks()}
+        self._attack_stats = {
+            attack.name: {"tries": 0, "detected": 0, "not_detected": 0}
+            for attack in realistic_attacks()
+        }
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
 
@@ -38,22 +42,41 @@ class RedAgent:
             attack = get_attack(self._scripted_attacks[round_number - 1])
             stealth = self._use_stealth(attack.name)
             tactic = self._build_tactic(attack.name, stealth)
+            self._record_try(attack.name)
             log = decision(
                 "RedAgent",
                 "attack_selected",
                 "scripted_mvp_coverage",
                 before=None,
-                after={"attack": attack.name, "stealth": stealth, "tactic": tactic},
+                after={
+                    "attack": attack.name,
+                    "stealth": stealth,
+                    "tactic": tactic,
+                    "candidate_scores": {
+                        attack.name: {
+                            "base_weight": self._weights.get(attack.name, 0.0),
+                            "tag_match_multiplier": 1,
+                            "final_score": self._weights.get(attack.name, 0.0),
+                        }
+                    },
+                },
             )
             return attack, stealth, tactic, log
 
         weighted = []
+        candidate_scores = {}
         tag_set = set(tags)
         for attack in realistic_attacks():
-            weight = self._weights[attack.name]
-            if tag_set.intersection(attack.preferred_tags):
-                weight *= 3
-            weighted.append((attack, max(weight, 0.0)))
+            base_weight = self._weights[attack.name]
+            tag_match = bool(tag_set.intersection(attack.preferred_tags))
+            multiplier = 3 if tag_match else 1
+            score = max(base_weight * multiplier, 0.0)
+            candidate_scores[attack.name] = {
+                "base_weight": round(base_weight, 4),
+                "tag_match_multiplier": multiplier,
+                "final_score": round(score, 4),
+            }
+            weighted.append((attack, score))
 
         total = sum(weight for _, weight in weighted)
         pick = self._rng.uniform(0.0, total)
@@ -69,14 +92,32 @@ class RedAgent:
 
         stealth = self._use_stealth(chosen.name)
         tactic = self._build_tactic(chosen.name, stealth)
+        self._record_try(chosen.name)
         log = decision(
             "RedAgent",
             "attack_selected",
             reason,
             before=tags,
-            after={"attack": chosen.name, "stealth": stealth, "tactic": tactic},
+            after={
+                "attack": chosen.name,
+                "stealth": stealth,
+                "tactic": tactic,
+                "candidate_scores": candidate_scores,
+            },
         )
         return chosen, stealth, tactic, log
+
+    def snapshot_policy(self) -> dict:
+        return {
+            "attack_weights": {name: round(weight, 4) for name, weight in sorted(self._weights.items())},
+            "attack_stats": {
+                name: dict(stats)
+                for name, stats in sorted(self._attack_stats.items())
+            },
+            "stealth_mode": self._stealth_mode,
+            "stealth_for": sorted(self._stealth_for),
+            "telemetry_probe_delta": self._telemetry_probe_delta,
+        }
 
     def _use_stealth(self, attack_name: str) -> bool:
         if self._stealth_mode == "on":
@@ -100,6 +141,11 @@ class RedAgent:
         before = self._weights.get(attack_name, 0.0)
         after = max(1.0, before - 0.5) if detected else before + 0.5
         self._weights[attack_name] = after
+        stats = self._attack_stats.setdefault(attack_name, {"tries": 0, "detected": 0, "not_detected": 0})
+        if detected:
+            stats["detected"] += 1
+        else:
+            stats["not_detected"] += 1
         # Adaptive stealth: once an attack is detected, retry it quietly.
         if self._stealth_mode == "adaptive" and detected:
             self._stealth_for.add(attack_name)
@@ -113,5 +159,13 @@ class RedAgent:
             "weight_update",
             "attack_detected" if detected else "attack_not_detected",
             before=before,
-            after={"weight": after, "telemetry_probe_delta": self._telemetry_probe_delta},
+            after={
+                "weight": after,
+                "telemetry_probe_delta": self._telemetry_probe_delta,
+                "policy_state": self.snapshot_policy(),
+            },
         )
+
+    def _record_try(self, attack_name: str) -> None:
+        stats = self._attack_stats.setdefault(attack_name, {"tries": 0, "detected": 0, "not_detected": 0})
+        stats["tries"] += 1

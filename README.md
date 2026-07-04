@@ -8,6 +8,8 @@
 
 ## 1. 한 줄 요약
 
+본 시스템은 단순 룰 기반 탐지기가 아니라, 공격 성공/탐지 피드백을 이용해 전략을 조정하는 **adaptive Red-Blue multi-agent architecture**입니다.
+
 ```text
 Red Agent가 blue_observed를 공격한다.
 Blue Agents는 world를 보지 않고 observed 내부 모순만으로 탐지·방어한다.
@@ -120,24 +122,7 @@ DAH_Flawless/
     logs/
       round_logs.jsonl
       summary.json
-  dist/
-    DAH2026_소스코드_DAH_Flawless.zip
   docs/
-  reports/
-    figures/
-      scoreboard.svg
-      scoreboard.png
-      world_observed_diff.svg
-      world_observed_diff.png
-      availability.svg
-      availability.png
-      agent_architecture.svg
-      agent_architecture.png
-      detect_contain_recover.svg
-      detect_contain_recover.png
-      attack_flow.svg
-      attack_flow.png
-  scripts/
   src/
     dah_flawless/
       main.py
@@ -147,7 +132,6 @@ DAH_Flawless/
       blue/
       environment/
       scoring/
-      reports/
   tests/
 ```
 
@@ -415,29 +399,16 @@ PYTHONPATH=src python3 -m dah_flawless.main \
 
 ---
 
-## 11. 그림 생성
+## 11. 결과 확인
 
-Streamlit 외에도 보고서에 넣을 수 있는 SVG/PNG 그림을 생성할 수 있습니다.
+실행 결과는 `data/logs/round_logs.jsonl`과 `data/logs/summary.json`에 저장됩니다.
+시각화와 라운드별 세부 확인은 Streamlit 대시보드에서 합니다.
 
 ```bash
-cd /Users/gwonchangbin/projects/DAH_Flawless
-PYTHONPATH=src python3 -m dah_flawless.reports.figures \
-  --log data/logs/round_logs.jsonl \
-  --out-dir reports/figures
+PYTHONPATH=src streamlit run streamlit_app.py
 ```
 
-생성물:
-
-| 파일 | 내용 |
-|---|---|
-| `reports/figures/scoreboard.svg/.png` | 라운드별 공격/승패/availability |
-| `reports/figures/world_observed_diff.svg/.png` | Scorer/Admin용 trusted vs observed 비교 |
-| `reports/figures/availability.svg/.png` | availability 곡선 |
-| `reports/figures/agent_architecture.svg/.png` | Red/Blue/Scorer 협력 구조와 truth boundary |
-| `reports/figures/detect_contain_recover.svg/.png` | 공격별 Detect/Contain/Recover 증거 |
-| `reports/figures/attack_flow.svg/.png` | 공격 흐름 요약 |
-
-Pillow가 설치되어 있으면 PNG가 같이 생성됩니다. `requirements.txt` 설치 환경에서는 PNG 생성을 기본 지원합니다.
+대시보드의 `Overview`, `Timeline`, `Scorer/Admin Diff`, `Charts`, `Decision Logs` 탭에서 공격·방어 결과와 adaptive policy log를 확인할 수 있습니다.
 
 ---
 
@@ -454,6 +425,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 |---|---|
 | `test_redaction.py` | Blue 입력에 `world`가 없는지 |
 | `test_attacks_e2e.py` | 공격 3종 E2E와 탐지/판정 |
+| `test_policy_logs.py` | adaptive Red/Blue policy log |
 | `test_seed_reproducibility.py` | 같은 seed에서 같은 결과가 나오는지 |
 | `test_scorer.py` | 승패 판정 규칙 |
 | `test_hash_log.py` | 로그 해시 체인 변조 탐지 |
@@ -461,7 +433,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests
 정상 출력:
 
 ```text
-Ran 6 tests
+Ran 25 tests
 OK
 ```
 
@@ -591,7 +563,7 @@ PYTHONPATH=src python3 -m dah_flawless.main --seed 42 --rounds 5
 - LLM 기반 추론은 사용하지 않습니다.
 - 공격은 안전한 시뮬레이션 mutation으로만 구현되어 있습니다.
 - 첫 3라운드는 공격 3종 증거 확보를 위해 고정 순서입니다.
-- Streamlit은 데모와 분석용이며, 최종 평가는 보고서의 로그·그림·테스트 증거와 함께 설명해야 합니다.
+- Streamlit은 데모와 분석용이며, 최종 평가는 로그와 테스트 증거를 중심으로 설명해야 합니다.
 
 확장 가능 항목:
 
@@ -599,7 +571,6 @@ PYTHONPATH=src python3 -m dah_flawless.main --seed 42 --rounds 5
 - 여러 seed 집계 그래프
 - 더 많은 공격 카탈로그
 - 방어 큐 지연/슬롯 포화 시나리오
-- PDF 보고서 자동 생성
 
 ---
 
@@ -617,26 +588,20 @@ PYTHONPATH=src python3 -m dah_flawless.main --seed 42 --rounds 5
 
 ---
 
-## 18. 제출 ZIP에 넣을 항목
+## 18. 제출 ZIP
 
-예선 부가자료 ZIP에는 최소한 아래를 넣습니다.
+제출 ZIP은 최종 제출 직전에 별도로 만들면 됩니다. 현재 저장소에는 실행에 필요한 코드와 문서만 남깁니다.
+
+ZIP을 만들 때는 아래 항목을 기준으로 포함하면 됩니다.
 
 ```text
 README.md
 requirements.txt
 streamlit_app.py
+docs/
 src/
 tests/
-data/logs/round_logs.jsonl
-data/logs/summary.json
-reports/figures/
-reports/evidence_trace.md
-reports/submission_checklist.md
-reports/prelim_report_draft.md
-reports/DAH2026_prelim_report_DAH_Flawless_draft.pdf
 Dockerfile
-scripts/build_submission_zip.py
-scripts/render_report_pdf.py
 ```
 
-`.venv/`, `__pycache__/`, `.DS_Store`는 제출 ZIP에서 제외합니다.
+`.venv/`, `__pycache__/`, `.DS_Store`, `dist/`, 로컬 실행 로그는 제출 ZIP에서 제외합니다.

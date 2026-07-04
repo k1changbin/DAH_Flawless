@@ -65,6 +65,8 @@ def run_simulation(
         score = score_round(pre_defense_state, defended_state, attack, threats, actions)
         report, report_log = write_incident_report(threats, risks, actions, score)
         red_update_log = red_agent.update_weight(attack.name, score.detection_success)
+        red_policy_state = red_agent.snapshot_policy()
+        blue_policy_state = defense_log["after"].get("policy_state", {})
 
         entry_without_hash = {
             "round": round_number,
@@ -78,6 +80,21 @@ def run_simulation(
             "mission_risks": [risk.to_dict() for risk in risks],
             "defense_actions": defended_state["defense_runtime"]["active_defenses"],
             "score": score.to_dict(),
+            "feedback": {
+                "red": {
+                    "attack_success": score.attack_success,
+                    "detection_success": score.detection_success,
+                    "winner": score.winner,
+                },
+                "blue": {
+                    "recovery_success": score.recovery_success,
+                    "availability": score.availability,
+                    "false_positive": score.false_positive,
+                    "winner": score.winner,
+                },
+            },
+            "red_policy_state": red_policy_state,
+            "blue_policy_state": blue_policy_state,
             "incident_report": report,
             "decision_log": [
                 red_choice_log,

@@ -8,8 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY README.md pyproject.toml streamlit_app.py ./
 COPY src ./src
 COPY tests ./tests
-COPY data ./data
-COPY reports ./reports
 
 ENV PYTHONPATH=/app/src
 

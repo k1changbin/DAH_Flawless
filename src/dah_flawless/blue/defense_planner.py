@@ -24,13 +24,39 @@ def plan_defense(
 ) -> tuple[list[DefenseAction], dict]:
     actions: list[DefenseAction] = []
     domain_trust = (defense_runtime or {}).get("domain_trust", {})
+    risk_by_target = {risk.target: risk for risk in risks}
+    threat_decisions = []
 
     for threat in threats:
         trust = domain_trust.get(threat.target, 1.0)
         confirmed = threat.confidence >= LOW_CONFIDENCE_THRESHOLD or trust < TRUST_ESCALATION_THRESHOLD
-        actions.extend(_actions_for_threat(threat, confirmed))
+        selected = _actions_for_threat(threat, confirmed)
+        actions.extend(selected)
+        risk = risk_by_target.get(threat.target)
+        threat_decisions.append(
+            {
+                "target": threat.target,
+                "confidence": threat.confidence,
+                "domain_trust": trust,
+                "confirmed": confirmed,
+                "reason": _confirmation_reason(threat.confidence, trust),
+                "mission_impact": risk.impact if risk else None,
+                "selected_actions": [action.action for action in selected],
+            }
+        )
 
     cost = round(sum(action.availability_cost for action in actions), 4)
+    policy_state = {
+        "thresholds": {
+            "low_confidence": LOW_CONFIDENCE_THRESHOLD,
+            "trust_escalation": TRUST_ESCALATION_THRESHOLD,
+        },
+        "domain_trust": domain_trust,
+        "threat_decisions": threat_decisions,
+        "availability_before": mission_state["availability"],
+        "availability_cost": cost,
+        "availability_after_estimate": max(0.0, round(mission_state["availability"] - cost, 4)),
+    }
     log = decision(
         "DefensePlannerAgent",
         "action_selected",
@@ -40,9 +66,21 @@ def plan_defense(
             "availability": mission_state["availability"],
             "domain_trust": domain_trust,
         },
-        after={"actions": [action.to_dict() for action in actions], "availability_cost": cost},
+        after={
+            "actions": [action.to_dict() for action in actions],
+            "availability_cost": cost,
+            "policy_state": policy_state,
+        },
     )
     return actions, log
+
+
+def _confirmation_reason(confidence: float, trust: float) -> str:
+    if confidence >= LOW_CONFIDENCE_THRESHOLD:
+        return "high_confidence"
+    if trust < TRUST_ESCALATION_THRESHOLD:
+        return "low_trust_escalation"
+    return "low_confidence_high_trust"
 
 
 def apply_defense_actions(

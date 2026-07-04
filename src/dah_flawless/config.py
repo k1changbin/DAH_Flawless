@@ -31,7 +31,7 @@ SCRIPTED_ATTACKS = (
     "TIME_DESYNC_REPLAY",
 )
 
-# Scenario types (README section 3 / docs/HANDOFF.md).
+# Scenario types (README and docs/implementation_plan.md).
 SCENARIOS = ("clean_start", "degraded_start")
 DEFAULT_SCENARIO = "clean_start"
 
