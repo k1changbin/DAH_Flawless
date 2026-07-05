@@ -13,6 +13,7 @@ from dah_flawless.config import (
     RECOVERY_TARGET,
     RECOVERY_WINDOW,
 )
+from dah_flawless.scoring.goal_scorer import score_red_goal
 from dah_flawless.schemas import Attack, DefenseAction, Score, Threat
 
 
@@ -24,6 +25,7 @@ def score_round(
     actions: list[DefenseAction],
     threat_history: list[list[Threat]] | None = None,
     recovery_history: list[dict[str, bool]] | None = None,
+    red_goal: dict | None = None,
 ) -> Score:
     evidence = _attack_evidence(pre_defense_state, attack)
     attack_success = bool(evidence["mismatch"])
@@ -32,6 +34,17 @@ def score_round(
     current_recovery_success = _recovery_success(post_defense_state, attack)
     recovery_success = _recovered_in_window(attack, current_recovery_success, recovery_history)
     availability = post_defense_state["mission"]["availability"]
+    goal_score = score_red_goal(
+        pre_defense_state=pre_defense_state,
+        post_defense_state=post_defense_state,
+        attack=attack,
+        red_goal=red_goal,
+        threats=threats,
+        actions=actions,
+        attack_success=attack_success,
+        detection_success=detection_success,
+        recovery_success=recovery_success,
+    )
 
     if attack_success and not detection_success:
         winner = "RED_BREACH"
@@ -50,6 +63,7 @@ def score_round(
     evidence["detection_window"] = DETECTION_WINDOW
     evidence["recovery_window"] = RECOVERY_WINDOW
     evidence["current_recovery_success"] = current_recovery_success
+    evidence["goal_score"] = goal_score
     return Score(
         winner=winner,
         attack_success=attack_success,
@@ -59,6 +73,9 @@ def score_round(
         availability=availability,
         target_domain=attack.target_domain,
         evidence=evidence,
+        goal_id=goal_score["goal_id"],
+        goal_success=goal_score["goal_success"],
+        goal_reward=goal_score["goal_reward"],
     )
 
 

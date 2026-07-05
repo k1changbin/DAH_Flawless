@@ -85,6 +85,9 @@ class Score:
     availability: float
     target_domain: str
     evidence: dict[str, Any] = field(default_factory=dict)
+    goal_id: str | None = None
+    goal_success: bool = False
+    goal_reward: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

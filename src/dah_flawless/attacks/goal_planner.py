@@ -256,6 +256,9 @@ def update_goal_stats(goal_stats: dict | None, goal_id: str, score: Score, round
 
 def reward_from_score(score: Score | dict) -> float:
     data = score.to_dict() if hasattr(score, "to_dict") else dict(score)
+    explicit_goal_reward = data.get("goal_reward")
+    if explicit_goal_reward is None:
+        explicit_goal_reward = data.get("evidence", {}).get("goal_score", {}).get("goal_reward")
     reward = 0.05
     if data.get("attack_success"):
         reward += 0.35
@@ -279,6 +282,8 @@ def reward_from_score(score: Score | dict) -> float:
     evidence = data.get("evidence", {})
     defense_count = len(evidence.get("defense_actions", []) or [])
     reward += min(0.16, defense_count * 0.04)
+    if explicit_goal_reward is not None:
+        reward = 0.65 * float(explicit_goal_reward) + 0.35 * reward
     return round(min(1.0, max(0.0, reward)), 4)
 
 

@@ -165,6 +165,8 @@ Mutation Approval Reviewer는 `src/dah_flawless/mutation_review/`에 있다. Att
 
 Scorer만 scorer_truth와 blue_observed를 동시에 본다.
 
+기본 `attack_success`는 target domain에서 scorer_truth와 observed가 의미 있게 벌어졌는지를 본다. `goal_success`는 Red Goal Planner가 선택한 cyber-effect 목표가 달성됐는지를 따로 본다. 예를 들어 같은 command domain이라도 stale command, ACK 인과 혼란, channel state suppression은 서로 다른 evidence로 채점한다.
+
 | 판정 | 의미 |
 |---|---|
 | `RED_BREACH` | 공격 성공, 탐지 실패 |
@@ -173,7 +175,7 @@ Scorer만 scorer_truth와 blue_observed를 동시에 본다.
 | `BLUE_RECOVERY` | 탐지 후 신뢰 상태 복구 |
 | `DRAW` | 명확한 승패 없음 |
 
-scorer evidence에는 trusted value, observed value, mismatch, detection/recovery window, defense actions를 남긴다.
+scorer evidence에는 trusted value, observed value, mismatch, detection/recovery window, defense actions, `goal_score`를 남긴다. `goal_score`는 `goal_id`, `goal_success`, `goal_reward`, 목표별 evidence를 포함한다.
 
 ## 10. 학습 루프 계획
 
@@ -205,6 +207,7 @@ for block in training_schedule:
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `GoalPlanner` | context + previous logs + UCB exploration으로 Red cyber-effect 목표 선택 | 구현 |
+| `GoalAwareScorer` | selected cyber-effect 목표별 success/reward/evidence 산출 | 구현 |
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
 | `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |

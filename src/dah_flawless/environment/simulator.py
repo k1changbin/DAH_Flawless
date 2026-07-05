@@ -112,6 +112,7 @@ def run_simulation(
         defended_state = apply_defense_actions(attacked_state, actions, history, threats, attacked_state["capabilities"])
         if not blue_update_enabled:
             apply_blue_policy_state(defended_state, blue_policy_before_round)
+        red_goal = deepcopy(red_tactic.get("goal_plan") or red_choice_log.get("after", {}).get("goal"))
         score = score_round(
             pre_defense_state,
             defended_state,
@@ -120,6 +121,7 @@ def run_simulation(
             actions,
             threat_history=threat_history,
             recovery_history=recovery_history,
+            red_goal=red_goal,
         )
         report, report_log = write_incident_report(threats, risks, actions, score)
         if blue_update_enabled:
@@ -133,7 +135,6 @@ def run_simulation(
         else:
             blue_policy_after, blue_update_log = freeze_blue_policy(blue_policy_before_round)
         apply_blue_policy_state(defended_state, blue_policy_after)
-        red_goal = deepcopy(red_tactic.get("goal_plan") or red_choice_log.get("after", {}).get("goal"))
         if red_update_enabled:
             red_update_log = red_agent.update_weight(
                 attack.name,
@@ -183,7 +184,10 @@ def run_simulation(
                 "blue_policy_updated": blue_update_enabled,
                 "winner": score.winner,
                 "target_domain": attack.target_domain,
+                "goal_id": score.goal_id,
                 "attack_success": score.attack_success,
+                "goal_success": score.goal_success,
+                "goal_reward": score.goal_reward,
                 "detection_success": score.detection_success,
                 "recovery_success": score.recovery_success,
             },
