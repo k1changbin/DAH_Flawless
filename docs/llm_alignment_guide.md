@@ -79,6 +79,7 @@ DAH_Flawless/
     attacks/
     blue/
     environment/
+      state_factory.py
       episode_runner.py
       training_scheduler.py
       holdout_evaluator.py
@@ -225,7 +226,9 @@ Fixed evaluation block: 3 episodes
 
 `10 episodes`는 기본값이며, 실험 시간이나 데이터 양에 따라 바꿀 수 있다. 중요한 원칙은 한쪽을 업데이트하는 동안 상대 정책을 고정해 비정상적인 동시 적응을 줄이는 것이다.
 
-현재 구현에서는 `TrainingScheduler`가 이 cadence를 실행한다. Red policy state는 공격 weight, adaptive stealth set, telemetry probe delta를 저장한다. Blue policy state는 rule-based baseline에서 쓰는 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`를 저장한다. Blue update block에서는 Red policy를 고정하고 Blue policy만 업데이트하며, Red update block에서는 Blue policy를 고정하고 Red weight/probe만 업데이트한다. Fixed evaluation block에서는 둘 다 고정한다. `HoldoutEvaluator`는 이 최종 policy state를 복사해 별도 seed/scenario에서 업데이트 없이 평가하며, MVP coverage용 scripted attack은 꺼서 학습된 policy 선택을 평가한다.
+현재 구현에서는 `TrainingScheduler`가 이 cadence를 실행한다. Red policy state는 공격 weight, adaptive stealth set, telemetry probe delta를 저장한다. Blue policy state는 rule-based baseline에서 쓰는 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`를 저장한다. Blue update block에서는 Red policy를 고정하고 Blue policy만 업데이트하며, Red update block에서는 Blue policy를 고정하고 Red weight/probe만 업데이트한다. Fixed evaluation block에서는 둘 다 고정한다. `HoldoutEvaluator`는 이 최종 policy state를 복사해 scenario pack 전체에서 업데이트 없이 평가하며, MVP coverage용 scripted attack은 꺼서 학습된 policy 선택을 평가한다.
+
+현재 scenario pack은 `clean_start`, `degraded_start`, `satcom_delay`, `gnss_degraded`, `c2_metadata_noisy`, `telemetry_conflict`, `low_trust_start`다. 각 scenario는 실제 공격을 수행하지 않고 초기 world/observe/capability/policy 조건만 바꾼다.
 
 현재 Blue는 rule-based baseline에 scorer feedback 기반 policy update를 붙인 형태다. 완전한 RL은 아니며, 보고서에서는 adaptive defense policy로 설명한다.
 
@@ -550,6 +553,7 @@ new_weight = old_weight + learning_rate * normalized_reward
 | `holdout_case` | HoldoutEvaluator 실행 시 seed/scenario 조합 번호 |
 | `holdout_seed` | frozen-policy holdout 평가에 사용한 seed |
 | `holdout_scenario` | frozen-policy holdout 평가에 사용한 scenario |
+| `scenario_profile` | scenario pack이 설정한 강조 조건과 설명 |
 | `generalization_flags` | holdout summary에서 causal failure, 낮은 다양성, 낮은 goal success 같은 경고 |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `blue_policy_state` | Blue domain/effect sensitivity, threshold, trust, feedback counts |
@@ -587,6 +591,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | 30-step EpisodeRunner | 구현 |
 | Alternating TrainingScheduler | 구현 |
 | Holdout seed/scenario evaluator | 구현 |
+| Scenario Pack | 구현 |
 | Mutation Approval Reviewer | 구현 |
 | Mutation Policy field-level enforcement | 핵심 필드 구현, YAML config 자동 로딩 구현 |
 | VAE world generator | 미구현 |

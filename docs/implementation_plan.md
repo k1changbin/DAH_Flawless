@@ -32,7 +32,7 @@ raw_world
 | 학습 cadence | Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes |
 | 현재 우선순위 | 코드 완성보다 보고서용 구조와 용어 명료화 우선 |
 
-현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다. `TrainingScheduler`는 Blue-only/Red-only/fixed-eval update block을 관리한다. `HoldoutEvaluator`는 최종 Red/Blue policy를 frozen 상태로 복사해 별도 seed/scenario에서 일반화 평가를 수행한다.
+현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다. `TrainingScheduler`는 Blue-only/Red-only/fixed-eval update block을 관리한다. `HoldoutEvaluator`는 최종 Red/Blue policy를 frozen 상태로 복사해 scenario pack 전체에서 일반화 평가를 수행한다.
 
 ## 3. 저장소 구조 원칙
 
@@ -76,6 +76,7 @@ src/dah_flawless/
     mutations.py
   blue/
   environment/
+    state_factory.py
   scoring/
     causal_consistency.py
 tests/
@@ -215,6 +216,7 @@ for block in training_schedule:
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `HoldoutEvaluator` | frozen Red/Blue policy를 별도 seed/scenario grid에서 평가 | 구현 |
+| `ScenarioPack` | clean/degraded/SATCOM/GNSS/C2 metadata/telemetry/low-trust 조건 제공 | 구현 |
 | `GoalPlanner` | context + previous logs + UCB exploration + diversity guard로 Red cyber-effect 목표 선택 | 구현 |
 | `AttackEffectContract` | 공격 후보와 지원 goal/effect/evidence를 묶어 selector/scorer 정합성 기준 제공 | 구현 |
 | `CausalConsistencyMonitor` | attack -> mutation -> tag/effect -> scorer evidence 체인 검사 | 구현 |
@@ -238,6 +240,7 @@ for block in training_schedule:
 | 30-step EpisodeRunner | 구현 |
 | Alternating TrainingScheduler | 구현 |
 | Holdout seed/scenario evaluator | 구현 |
+| Scenario Pack | 구현 |
 | MutationApprovalReviewer | reviewer-only 구현 |
 | MutationPolicy field-level enforcement | 핵심 필드 구현, YAML config 자동 로딩 구현 |
 | 실제 RF/API adapter | 미구현 |

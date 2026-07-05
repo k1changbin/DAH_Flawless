@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from dah_flawless.blue.feedback_learner import default_blue_policy_state
-from dah_flawless.config import BASE_TIMESTAMP, DEFAULT_SCENARIO
+from dah_flawless.config import BASE_TIMESTAMP, DEFAULT_SCENARIO, SCENARIOS
 from dah_flawless.observation import build_blue_observed
 
 
@@ -17,11 +17,16 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
     key ``state["world"]``.
 
     scenario:
-      clean_start    - full capabilities, availability 1.0 (default).
-      degraded_start - starts partially paralyzed: lowered availability plus
-                       degraded cross-check / restore capabilities and GNSS,
-                       so Blue must detect and recover from a weakened footing.
+      clean_start         - full capabilities, availability 1.0 (default).
+      degraded_start      - weakened recovery footing and GNSS.
+      satcom_delay        - persistent high-latency / jittery SATCOM profile.
+      gnss_degraded       - poor satellite geometry and weak GNSS signal.
+      c2_metadata_noisy   - noisy but visible C2 metadata/auth/checksum state.
+      telemetry_conflict  - physically suspicious telemetry operating point.
+      low_trust_start     - reduced mission budget and lower Blue trust state.
     """
+    if scenario not in SCENARIOS:
+        raise ValueError(f"unknown scenario: {scenario}")
 
     scorer_truth = {
         "time": {"true_timestamp": BASE_TIMESTAMP, "round": 0},
@@ -151,22 +156,21 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
         "time_validation": "OK",
     }
 
-    if scenario == "degraded_start":
-        # Start partially paralyzed: recovery footing is weak and cross-checks
-        # are degraded, so the same violation is harder for Blue to confirm.
-        mission["availability"] = 0.55
-        capabilities["cross_check_telemetry"] = "DEGRADED"
-        capabilities["trusted_restore"] = "DEGRADED"
-        blue_observed["navigation"]["gnss_fix_quality"] = "DEGRADED"
-        blue_observed["navigation"]["satellite_count"] = 4
-        blue_observed["navigation"]["hdop"] = 6.2
-
     blue_policy = default_blue_policy_state()
+    scenario_profile = _apply_scenario_profile(
+        scenario=scenario,
+        scorer_truth=scorer_truth,
+        blue_observed=blue_observed,
+        mission=mission,
+        capabilities=capabilities,
+        blue_policy=blue_policy,
+    )
 
     return {
         "round": 0,
         "seed": seed,
         "scenario": scenario,
+        "scenario_profile": scenario_profile,
         "world": scorer_truth,
         "blue_observed": blue_observed,
         "mission": mission,
@@ -198,3 +202,128 @@ def make_history(state: dict) -> dict:
         "last_navigation": deepcopy(obs["navigation"]),
         "last_command": obs["c2_message"]["command"],
     }
+
+
+def _apply_scenario_profile(
+    *,
+    scenario: str,
+    scorer_truth: dict,
+    blue_observed: dict,
+    mission: dict,
+    capabilities: dict,
+    blue_policy: dict,
+) -> dict:
+    if scenario == "clean_start":
+        return {
+            "name": scenario,
+            "emphasis": ("baseline",),
+            "description": "Nominal starting point with healthy Blue capabilities.",
+        }
+
+    if scenario == "degraded_start":
+        mission["availability"] = 0.55
+        mission["trust_budget"] = 0.72
+        capabilities["cross_check_telemetry"] = "DEGRADED"
+        capabilities["trusted_restore"] = "DEGRADED"
+        blue_observed["navigation"]["gnss_fix_quality"] = "DEGRADED"
+        blue_observed["navigation"]["satellite_count"] = 4
+        blue_observed["navigation"]["hdop"] = 6.2
+        blue_observed["navigation"]["cn0_avg"] = 27.0
+        scorer_truth["environment"]["gnss_interference"] = "PARTIAL"
+        return {
+            "name": scenario,
+            "emphasis": ("recovery_footing", "gnss_degraded", "capability_paralysis"),
+            "description": "Partially paralyzed start with degraded cross-check and trusted restore.",
+        }
+
+    if scenario == "satcom_delay":
+        link_profile = {
+            "latency_ms": 760,
+            "packet_loss": 0.14,
+            "message_queue_depth": 14,
+            "packet_interval_jitter_ms": 480,
+            "packet_size_variance": 11,
+            "ack_delay_ms": 1720,
+            "heartbeat_gap_ms": 3300,
+        }
+        scorer_truth["link_profile"] = link_profile
+        scorer_truth["environment"]["weather"] = "RAIN_FADE"
+        blue_observed["comms"].update(link_profile)
+        blue_observed["comms"]["channel"] = "SATCOM"
+        mission["availability"] = 0.84
+        mission["trust_budget"] = 0.86
+        capabilities["time_validation"] = "DEGRADED"
+        return {
+            "name": scenario,
+            "emphasis": ("satcom_delay", "channel_state_suppression", "ack_timing"),
+            "description": "Persistent delayed and lossy SATCOM channel with visible timing metadata.",
+        }
+
+    if scenario == "gnss_degraded":
+        scorer_truth["environment"]["gnss_interference"] = "SUSPECTED"
+        blue_observed["navigation"]["gnss_fix_quality"] = "DEGRADED"
+        blue_observed["navigation"]["satellite_count"] = 3
+        blue_observed["navigation"]["hdop"] = 8.3
+        blue_observed["navigation"]["cn0_avg"] = 21.5
+        capabilities["cross_check_telemetry"] = "DEGRADED"
+        mission["trust_budget"] = 0.88
+        return {
+            "name": scenario,
+            "emphasis": ("gnss_degraded", "navigation_trust", "telemetry_cross_check"),
+            "description": "Weak GNSS geometry and degraded telemetry cross-checks.",
+        }
+
+    if scenario == "c2_metadata_noisy":
+        blue_observed["c2_message"]["checksum_valid"] = False
+        blue_observed["c2_message"]["auth_valid"] = False
+        blue_observed["c2_message"]["signature_present"] = True
+        blue_observed["c2_message"]["metadata_plaintext"] = True
+        blue_observed["comms"]["request_rate"] = 12.5
+        blue_observed["comms"]["packet_size_variance"] = 4
+        blue_observed["comms"]["crypto_profile"]["nonce_reuse_suspected"] = True
+        blue_observed["comms"]["crypto_profile"]["weak_cipher_hint"] = True
+        capabilities["time_validation"] = "DEGRADED"
+        mission["trust_budget"] = 0.90
+        return {
+            "name": scenario,
+            "emphasis": ("c2_metadata", "auth_noise", "crypto_metadata"),
+            "description": "Noisy C2 metadata surface with visible auth/checksum irregularities.",
+        }
+
+    if scenario == "telemetry_conflict":
+        scorer_truth["uav"]["battery_percent"] = 76
+        scorer_truth["uav"]["battery_drain_rate"] = 1.1
+        scorer_truth["uav"]["motor_status"] = "OK"
+        blue_observed["telemetry"]["battery_percent"] = 76
+        blue_observed["telemetry"]["battery_drain_rate"] = 1.1
+        blue_observed["telemetry"]["motor_status"] = "OK"
+        internal = blue_observed["internal_observe"]["telemetry"]
+        internal["battery_percent"] = 76
+        internal["battery_drain_rate"] = 1.1
+        internal["motor_status"] = "OK"
+        capabilities["cross_check_telemetry"] = "OK"
+        mission["trust_budget"] = 0.92
+        return {
+            "name": scenario,
+            "emphasis": ("telemetry_consistency", "battery_motor_anomaly", "blue_overdefense_risk"),
+            "description": "A physically suspicious telemetry operating point without scorer-truth leakage.",
+        }
+
+    if scenario == "low_trust_start":
+        mission["availability"] = 0.70
+        mission["trust_budget"] = 0.58
+        capabilities["trusted_restore"] = "DEGRADED"
+        blue_policy["domain_trust"]["telemetry"] = 0.62
+        blue_policy["domain_trust"]["mission"] = 0.60
+        blue_policy["domain_trust"]["command"] = 0.58
+        blue_policy["detection_sensitivity"]["command"] = 1.05
+        blue_policy["detection_sensitivity"]["mission"] = 1.04
+        blue_policy["escalation_threshold"]["command"] = 0.68
+        blue_policy["escalation_threshold"]["mission"] = 0.68
+        return {
+            "name": scenario,
+            "emphasis": ("low_trust", "overdefense_pressure", "degraded_restore"),
+            "description": "Blue starts with lower mission budget and lower domain trust.",
+        }
+
+    raise ValueError(f"unknown scenario: {scenario}")

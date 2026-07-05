@@ -7,13 +7,25 @@ from dah_flawless.attacks.red_agent import RedAgent
 from dah_flawless.blue.defense_planner import apply_defense_actions, plan_defense
 from dah_flawless.blue.invariants import analyze_invariants
 from dah_flawless.blue.tagger import derive_tags
+from dah_flawless.config import SCENARIOS
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
 from dah_flawless.schemas import DefenseAction, Threat
 
 
-class DegradedScenarioTests(unittest.TestCase):
+class ScenarioPackTests(unittest.TestCase):
+    def test_scenario_pack_builds_all_declared_scenarios(self):
+        for scenario in SCENARIOS:
+            with self.subTest(scenario=scenario):
+                state = create_baseline_state(seed=1, scenario=scenario)
+                self.assertEqual(state["scenario"], scenario)
+                self.assertEqual(state["scenario_profile"]["name"], scenario)
+
+    def test_unknown_scenario_is_rejected(self):
+        with self.assertRaises(ValueError):
+            create_baseline_state(seed=1, scenario="unknown")
+
     def test_degraded_start_lowers_availability_and_capabilities(self):
         state = create_baseline_state(seed=1, scenario="degraded_start")
         self.assertEqual(state["scenario"], "degraded_start")
@@ -37,6 +49,61 @@ class DegradedScenarioTests(unittest.TestCase):
         tags = derive_tags(redact_state(state), make_history(state))
 
         self.assertIn("CROSS_CHECK_UNAVAILABLE", tags)
+
+    def test_satcom_delay_emits_channel_pressure_tags(self):
+        state = create_baseline_state(seed=1, scenario="satcom_delay")
+        tags = derive_tags(redact_state(state), make_history(state), state["capabilities"])
+
+        self.assertIn("HIGH_LATENCY", tags)
+        self.assertIn("PACKET_LOSS_HIGH", tags)
+        self.assertIn("QUEUE_DEPTH_HIGH", tags)
+        self.assertIn("PACKET_INTERVAL_ANOMALY", tags)
+        self.assertIn("ACK_TIMING_ANOMALY", tags)
+        self.assertEqual(state["capabilities"]["time_validation"], "DEGRADED")
+        self.assertEqual(state["world"]["link_profile"]["latency_ms"], 760)
+
+    def test_gnss_degraded_emits_navigation_tags(self):
+        state = create_baseline_state(seed=1, scenario="gnss_degraded")
+        tags = derive_tags(redact_state(state), make_history(state), state["capabilities"])
+
+        self.assertIn("GNSS_DEGRADED", tags)
+        self.assertIn("CROSS_CHECK_UNAVAILABLE", tags)
+        self.assertEqual(state["blue_observed"]["navigation"]["satellite_count"], 3)
+        self.assertEqual(state["world"]["environment"]["gnss_interference"], "SUSPECTED")
+
+    def test_c2_metadata_noisy_exposes_metadata_tags(self):
+        state = create_baseline_state(seed=1, scenario="c2_metadata_noisy")
+        tags = derive_tags(redact_state(state), make_history(state), state["capabilities"])
+
+        self.assertIn("AUTH_INVALID", tags)
+        self.assertIn("CHECKSUM_INVALID", tags)
+        self.assertIn("REQUEST_RATE_HIGH", tags)
+        self.assertIn("CRYPTO_WEAKNESS_HINT", tags)
+
+    def test_telemetry_conflict_emits_physical_consistency_tag(self):
+        state = create_baseline_state(seed=1, scenario="telemetry_conflict")
+        tags = derive_tags(redact_state(state), make_history(state), state["capabilities"])
+
+        self.assertIn("BATTERY_MOTOR_INCONSISTENT", tags)
+        self.assertEqual(state["world"]["uav"]["battery_percent"], 76)
+        self.assertEqual(state["blue_observed"]["telemetry"]["motor_status"], "OK")
+
+    def test_low_trust_start_sets_policy_pressure(self):
+        state = create_baseline_state(seed=1, scenario="low_trust_start")
+
+        self.assertLess(state["mission"]["availability"], 1.0)
+        self.assertLess(state["mission"]["trust_budget"], 0.7)
+        self.assertLess(state["defense_runtime"]["domain_trust"]["command"], 0.65)
+        self.assertEqual(state["capabilities"]["trusted_restore"], "DEGRADED")
+
+    def test_new_scenarios_run_one_round(self):
+        for scenario in SCENARIOS:
+            with self.subTest(scenario=scenario):
+                logs, summary = run_simulation(seed=42, rounds=1, scenario=scenario)
+                self.assertEqual(logs[0]["scenario"], scenario)
+                self.assertEqual(summary["scenario"], scenario)
+                self.assertEqual(logs[0]["scenario_profile"]["name"], scenario)
+                self.assertEqual(len(logs), 1)
 
     def test_degraded_start_first_round_keeps_initial_availability(self):
         logs, _ = run_simulation(seed=42, rounds=1, scenario="degraded_start")

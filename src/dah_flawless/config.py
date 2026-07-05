@@ -37,7 +37,15 @@ SCRIPTED_ATTACKS = (
 )
 
 # Scenario types (README section 3 / docs/HANDOFF.md).
-SCENARIOS = ("clean_start", "degraded_start")
+SCENARIOS = (
+    "clean_start",
+    "degraded_start",
+    "satcom_delay",
+    "gnss_degraded",
+    "c2_metadata_noisy",
+    "telemetry_conflict",
+    "low_trust_start",
+)
 DEFAULT_SCENARIO = "clean_start"
 
 # Red stealth modes: off = non-stealth mutation profile, on = always stealth,

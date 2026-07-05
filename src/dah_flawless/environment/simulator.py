@@ -170,6 +170,7 @@ def run_simulation(
             "round": round_number,
             "seed": seed,
             "scenario": scenario_label,
+            "scenario_profile": deepcopy(state.get("scenario_profile", {})),
             "mutation_profile": mutation_profile,
             "update_mode": {
                 "red_update_enabled": red_update_enabled,
@@ -236,6 +237,7 @@ def run_simulation(
 
     summary = summarize_logs(logs)
     summary["scenario"] = scenario_label
+    summary["scenario_profile"] = deepcopy(state.get("scenario_profile", {}))
     summary["stealth_mode"] = stealth_mode
     summary["mutation_profile"] = mutation_profile
     summary["update_mode"] = {
