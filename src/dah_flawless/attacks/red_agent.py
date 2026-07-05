@@ -15,6 +15,7 @@ import random
 from dah_flawless.attacks.catalog import get_attack, realistic_attacks
 from dah_flawless.attacks.selector import build_tactic, score_attack_candidates
 from dah_flawless.config import DEFAULT_MUTATION_PROFILE, DEFAULT_STEALTH_MODE, SCRIPTED_ATTACKS
+from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
 from dah_flawless.schemas import Attack, SituationTag, decision
 
 
@@ -26,6 +27,7 @@ class RedAgent:
         stealth_mode: str = DEFAULT_STEALTH_MODE,
         mutation_profile: str = DEFAULT_MUTATION_PROFILE,
         policy_state: dict | None = None,
+        policy_update_reviewer: PolicyUpdateReviewer | None = None,
     ):
         self._rng = random.Random(seed)
         self._scripted_attacks = scripted_attacks
@@ -34,6 +36,7 @@ class RedAgent:
         self._weights = {attack.name: attack.weight for attack in realistic_attacks()}
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
+        self._policy_update_reviewer = policy_update_reviewer or build_policy_update_reviewer()
         self.load_policy_state(policy_state)
 
     def choose_attack(
@@ -118,22 +121,44 @@ class RedAgent:
 
     def update_weight(self, attack_name: str, detected: bool) -> dict:
         before = self._weights.get(attack_name, 0.0)
-        after = max(1.0, before - 0.5) if detected else before + 0.5
+        before_probe_delta = self._telemetry_probe_delta
+        proposed_weight = max(1.0, before - 0.5) if detected else before + 0.5
+        proposed_probe_delta = before_probe_delta
+        if attack_name == "TELEMETRY_FDI":
+            if detected:
+                proposed_probe_delta = max(2, before_probe_delta - 6)
+            else:
+                proposed_probe_delta = min(28, before_probe_delta + 2)
+
+        reviewed, review_log = self._policy_update_reviewer.review_update(
+            agent="RedAgent",
+            update_name="attack_weight",
+            before={"weight": before, "telemetry_probe_delta": before_probe_delta},
+            proposed={"weight": proposed_weight, "telemetry_probe_delta": proposed_probe_delta},
+            context={
+                "attack_name": attack_name,
+                "detected": detected,
+                "agent_family": "red_probe",
+                "stealth_mode": self._stealth_mode,
+            },
+        )
+
+        after = float(reviewed["weight"])
         self._weights[attack_name] = after
+        self._telemetry_probe_delta = int(reviewed["telemetry_probe_delta"])
         # Adaptive stealth: once an attack is detected, retry it quietly.
         if self._stealth_mode == "adaptive" and detected:
             self._stealth_for.add(attack_name)
-        if attack_name == "TELEMETRY_FDI":
-            if detected:
-                self._telemetry_probe_delta = max(2, self._telemetry_probe_delta - 6)
-            else:
-                self._telemetry_probe_delta = min(28, self._telemetry_probe_delta + 2)
         return decision(
             "RedAgent",
             "weight_update",
             "attack_detected" if detected else "attack_not_detected",
-            before=before,
-            after={"weight": after, "telemetry_probe_delta": self._telemetry_probe_delta},
+            before={"weight": before, "telemetry_probe_delta": before_probe_delta},
+            after={
+                "weight": after,
+                "telemetry_probe_delta": self._telemetry_probe_delta,
+                "policy_update_review": review_log,
+            },
         )
 
     def load_policy_state(self, policy_state: dict | None) -> None:

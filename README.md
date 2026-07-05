@@ -37,6 +37,7 @@ raw_world -> Feature Extractor -> State Adapter
 | EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
 | TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
 | Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain trust, detection sensitivity, escalation threshold 업데이트 |
+| Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
 | Blue Defense | `src/dah_flawless/blue/` | 탐지, 임무위험, 단계방어 |
 | Scorer | `src/dah_flawless/scoring/scorer.py` | 승패, evidence, detection/recovery window |
 | Dashboard | `streamlit_app.py` | raw_world sample 입력, 로그 분석 |
@@ -95,7 +96,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `65 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `69 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Policy Update Reviewer fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -108,6 +109,7 @@ python -m unittest discover -s tests
 | `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `blue_policy_state` | Blue의 domain trust, detection sensitivity, escalation threshold, feedback count |
+| `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
 | `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약 |
 | `block`, `episode`, `global_step` | TrainingScheduler/EpisodeRunner 실행 단위 |
 | `score.evidence.trusted_value` | scorer_truth 기준값 |

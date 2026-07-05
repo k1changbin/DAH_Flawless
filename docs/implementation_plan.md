@@ -155,6 +155,8 @@ Redaction Boundary
 
 현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, false positive나 과방어 비용이 크면 sensitivity를 낮추고 threshold를 올린다.
 
+Policy Update Reviewer는 Red/Blue feedback learner가 만든 정책 변동 후보를 심사한다. 외부 LLM reviewer는 `configs/policy_update_reviewer.json`으로 켤 수 있지만 기본값은 off이며, 외부 연결 실패나 invalid JSON이 발생하면 오프라인 heuristic reviewer가 같은 인터페이스로 즉시 대체된다.
+
 ## 9. Scorer 계획
 
 Scorer만 scorer_truth와 blue_observed를 동시에 본다.
@@ -199,6 +201,7 @@ for block in training_schedule:
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
+| `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |
 | `MutationApprovalLLM` | proposed mutation의 이유, 허용 범위, 안전 경계 검토. reviewer-only | 설계 |
 | `MutationPolicy` | external_observe 허용 필드와 profile별 max delta 기준 | 핵심 필드 runtime enforcement 구현 |
 | `MutationProfile routing` | stealth/aggressive/loud_demo profile별 params 선택 | 구현 |

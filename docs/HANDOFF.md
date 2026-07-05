@@ -31,6 +31,7 @@ raw_world
 - Blue는 raw_world와 scorer_truth/state["world"]를 볼 수 없다.
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Feedback Learner는 scorer feedback으로 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`를 업데이트한다.
+- Policy Update Reviewer는 Red/Blue policy delta를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - 학습 cadence는 Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes를 기본값으로 두며, `TrainingScheduler`로 구현되어 있다.
 
 ## 구조 원칙
@@ -57,6 +58,7 @@ raw_world
 | `src/dah_flawless/attacks/selector.py` | Attack/Tactic scoring |
 | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed mutation engine |
 | `src/dah_flawless/blue/feedback_learner.py` | Blue scorer feedback learner |
+| `src/dah_flawless/policy_review/` | bounded policy update reviewer and external-LLM fallback |
 | `src/dah_flawless/environment/episode_runner.py` | 30-step episode runner |
 | `src/dah_flawless/environment/training_scheduler.py` | alternating Blue/Red update scheduler |
 | `src/dah_flawless/blue/` | Blue detection/mission/defense/report agents |

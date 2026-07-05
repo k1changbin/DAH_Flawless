@@ -228,6 +228,8 @@ Fixed evaluation block: 3 episodes
 
 현재 Blue는 rule-based baseline에 scorer feedback 기반 policy update를 붙인 형태다. 완전한 RL은 아니며, 보고서에서는 adaptive defense policy로 설명한다.
 
+Policy Update Reviewer는 Red/Blue feedback learner가 만든 policy delta 후보를 심사한다. 외부 LLM reviewer는 선택사항이며, 대회 환경에서 외부 연결이 끊기거나 JSON/schema 검증에 실패하면 오프라인 `HeuristicPolicyUpdateReviewer`가 같은 bounded candidate 절차를 수행한다. 따라서 LLM이 없어도 전체 학습 루프는 순수 코드로 계속 실행된다.
+
 ## 4. Red Attack AI Structure
 
 우리가 설명할 Red AI는 아래 구조다.
@@ -502,6 +504,7 @@ new_weight = old_weight + learning_rate * normalized_reward
 | `block` | TrainingScheduler 실행 시 `BLUE_UPDATE`, `RED_UPDATE`, `FIXED_EVAL` 중 현재 block |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `blue_policy_state` | Blue domain trust, detection sensitivity, escalation threshold, feedback counts |
+| `policy_update_review` | policy delta 후보, selected scale, rejection count, fallback reason |
 | `feedback` | scorer 결과를 policy update에 넘기는 요약 |
 | `red_input_redacted` | Red 입력에서 `world` 제거 여부 |
 | `blue_input_redacted` | Blue 입력에서 `world` 제거 여부 |
@@ -523,6 +526,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | mutation engine | 구현 |
 | stealth/probe controller | 기본 구현 |
 | feedback learner | Red/Blue 기본 구현 |
+| policy update reviewer | 구현 |
 | blue invariant defense | 구현 |
 | scorer | 구현 |
 | 30-step EpisodeRunner | 구현 |

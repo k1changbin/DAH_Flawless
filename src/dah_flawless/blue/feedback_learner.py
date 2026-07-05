@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from dah_flawless.config import LOW_CONFIDENCE_THRESHOLD
+from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
 from dah_flawless.schemas import DefenseAction, Score, Threat, decision
 
 DOMAINS = ("telemetry", "mission", "command")
@@ -109,6 +110,7 @@ def update_blue_policy(
     score: Score,
     threats: list[Threat],
     actions: list[DefenseAction],
+    reviewer: PolicyUpdateReviewer | None = None,
 ) -> tuple[dict, dict]:
     policy = normalize_blue_policy_state(policy_state)
     before = deepcopy(policy)
@@ -152,6 +154,25 @@ def update_blue_policy(
         reason = f"{reason}_with_cost_control"
 
     _clamp_policy(policy)
+    policy_update_reviewer = reviewer or build_policy_update_reviewer()
+    reviewed_tunables, review_log = policy_update_reviewer.review_update(
+        agent="BlueFeedbackLearner",
+        update_name="domain_policy",
+        before=_policy_tunables(before),
+        proposed=_policy_tunables(policy),
+        context={
+            "target_domain": domain,
+            "winner": score.winner,
+            "attack_success": score.attack_success,
+            "detection_success": score.detection_success,
+            "false_positive": score.false_positive,
+            "recovery_success": score.recovery_success,
+            "over_defense": action_cost >= 0.10,
+            "action_cost": action_cost,
+        },
+    )
+    _apply_tunables(policy, reviewed_tunables)
+    _clamp_policy(policy)
     return policy, decision(
         "BlueFeedbackLearner",
         "policy_updated",
@@ -161,6 +182,7 @@ def update_blue_policy(
             "policy_state": deepcopy(policy),
             "action_cost": action_cost,
             "score": score.to_dict(),
+            "policy_update_review": review_log,
         },
     )
 
@@ -187,6 +209,21 @@ def _adjust(
     policy["domain_trust"][domain] += trust_delta
     policy["detection_sensitivity"][domain] += sensitivity_delta
     policy["escalation_threshold"][domain] += threshold_delta
+
+
+def _policy_tunables(policy: dict) -> dict:
+    return {
+        "domain_trust": deepcopy(policy["domain_trust"]),
+        "detection_sensitivity": deepcopy(policy["detection_sensitivity"]),
+        "escalation_threshold": deepcopy(policy["escalation_threshold"]),
+    }
+
+
+def _apply_tunables(policy: dict, tunables: dict) -> None:
+    for key in ("domain_trust", "detection_sensitivity", "escalation_threshold"):
+        for domain in DOMAINS:
+            if domain in tunables.get(key, {}):
+                policy[key][domain] = tunables[key][domain]
 
 
 def _clamp_policy(policy: dict) -> None:

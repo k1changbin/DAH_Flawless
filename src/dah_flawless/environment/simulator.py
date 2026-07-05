@@ -34,6 +34,7 @@ from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_j
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
 from dah_flawless.observation import refresh_internal_observe_from_truth, sync_external_observe_from_flat
+from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
 from dah_flawless.scoring.metrics import summarize_logs
 from dah_flawless.scoring.scorer import score_round
 from dah_flawless.schemas import decision
@@ -53,17 +54,20 @@ def run_simulation(
     blue_update_enabled: bool = True,
     red_policy_state: dict | None = None,
     blue_policy_state: dict | None = None,
+    policy_update_reviewer: PolicyUpdateReviewer | None = None,
 ) -> tuple[list[dict], dict]:
     state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(seed, scenario)
     if blue_policy_state is not None:
         apply_blue_policy_state(state, blue_policy_state)
     scenario_label = state.get("scenario", scenario)
     history = make_history(state)
+    reviewer = policy_update_reviewer or build_policy_update_reviewer()
     red_agent = RedAgent(
         seed,
         stealth_mode=stealth_mode,
         mutation_profile=mutation_profile,
         policy_state=red_policy_state,
+        policy_update_reviewer=reviewer,
     )
     logs: list[dict] = []
     threat_history: list[list] = []
@@ -109,6 +113,7 @@ def run_simulation(
                 score,
                 threats,
                 actions,
+                reviewer=reviewer,
             )
         else:
             blue_policy_after, blue_update_log = freeze_blue_policy(blue_policy_before_round)
