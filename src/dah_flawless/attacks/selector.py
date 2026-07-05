@@ -159,14 +159,26 @@ def score_attack_candidates(
     attacks: list[Attack],
     learned_weights: dict[str, float],
     tag_details: list[SituationTag] | None,
+    goal_plan: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     tag_confidence = _tag_confidence(tag_details)
     candidates = []
+    preferred_attacks = set((goal_plan or {}).get("preferred_attacks", []))
+    goal_target_domain = (goal_plan or {}).get("target_domain")
 
     for attack in attacks:
         matched_tags = sorted(set(attack.preferred_tags).intersection(tag_confidence))
         matched_strength = round(sum(tag_confidence[tag] for tag in matched_tags), 3)
-        score = round(learned_weights.get(attack.name, attack.weight) * (1.0 + min(2.5, 0.7 * matched_strength)), 3)
+        goal_bonus = 0.0
+        if attack.name in preferred_attacks:
+            goal_bonus += 0.35
+        if goal_target_domain in {attack.target_domain, "multi_domain"}:
+            goal_bonus += 0.12
+        score = round(
+            learned_weights.get(attack.name, attack.weight)
+            * (1.0 + min(2.5, 0.7 * matched_strength) + goal_bonus),
+            3,
+        )
         candidates.append(
             {
                 "attack": attack.name,
@@ -174,6 +186,8 @@ def score_attack_candidates(
                 "base_weight": learned_weights.get(attack.name, attack.weight),
                 "matched_tags": matched_tags,
                 "matched_strength": matched_strength,
+                "goal_bonus": round(goal_bonus, 3),
+                "goal_id": (goal_plan or {}).get("goal_id"),
             }
         )
 
@@ -186,6 +200,7 @@ def build_tactic(
     tag_details: list[SituationTag] | None,
     telemetry_probe_delta: int,
     mutation_profile: str = DEFAULT_MUTATION_PROFILE,
+    goal_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile = _profile_for_tactic(stealth, mutation_profile)
     if stealth and attack_name == "TELEMETRY_FDI":
@@ -195,15 +210,17 @@ def build_tactic(
             "strategy": "boundary_probe",
             "probe_delta": telemetry_probe_delta,
             "selector": "stealth_controller",
+            "goal_plan": goal_plan,
         }
 
-    tactic_scores = score_tactic_candidates(attack_name, tag_details)
+    tactic_scores = score_tactic_candidates(attack_name, tag_details, goal_plan=goal_plan)
     if not tactic_scores:
         return {
             "stealth": stealth,
             "mutation_profile": profile,
             "strategy": "no_boundary_margin" if stealth else "profile_direct_mutation",
             "selector": "fallback",
+            "goal_plan": goal_plan,
         }
 
     chosen = tactic_scores[0]
@@ -212,6 +229,7 @@ def build_tactic(
         "mutation_profile": profile,
         "strategy": chosen["strategy"],
         "goal": chosen["goal"],
+        "goal_plan": goal_plan,
         "selector": "tag_scored_tactic_policy",
         "score": chosen["score"],
         "score_breakdown": chosen["score_breakdown"],
@@ -222,8 +240,14 @@ def build_tactic(
     }
 
 
-def score_tactic_candidates(attack_name: str, tag_details: list[SituationTag] | None) -> list[dict[str, Any]]:
+def score_tactic_candidates(
+    attack_name: str,
+    tag_details: list[SituationTag] | None,
+    goal_plan: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     tag_confidence = _tag_confidence(tag_details)
+    preferred_tactics = set((goal_plan or {}).get("preferred_tactics", []))
+    preferred_goal_tags = set((goal_plan or {}).get("matched_tags", []))
     candidates = []
 
     for tactic in TACTIC_CATALOG:
@@ -238,7 +262,12 @@ def score_tactic_candidates(attack_name: str, tag_details: list[SituationTag] | 
             3,
         )
         tag_bonus = round(matched_strength * 1.15, 3)
-        score = round(tactic.base_score + tactic.impact + tag_bonus - tactic.detectability - tactic.cost, 3)
+        goal_bonus = 0.0
+        if tactic.strategy in preferred_tactics:
+            goal_bonus += 0.8
+        if preferred_goal_tags.intersection(matched_tags):
+            goal_bonus += 0.25
+        score = round(tactic.base_score + tactic.impact + tag_bonus + goal_bonus - tactic.detectability - tactic.cost, 3)
         candidates.append(
             {
                 "attack": tactic.attack_name,
@@ -246,6 +275,8 @@ def score_tactic_candidates(attack_name: str, tag_details: list[SituationTag] | 
                 "goal": tactic.goal,
                 "score": score,
                 "matched_tags": matched_tags,
+                "goal_bonus": round(goal_bonus, 3),
+                "goal_id": (goal_plan or {}).get("goal_id"),
                 "params": dict(tactic.params),
                 "params_by_profile": {profile: dict(params) for profile, params in tactic.params_by_profile.items()},
                 "score_breakdown": {
@@ -253,6 +284,7 @@ def score_tactic_candidates(attack_name: str, tag_details: list[SituationTag] | 
                     "impact": tactic.impact,
                     "matched_strength": matched_strength,
                     "tag_bonus": tag_bonus,
+                    "goal_bonus": round(goal_bonus, 3),
                     "detectability_penalty": tactic.detectability,
                     "execution_cost": tactic.cost,
                 },

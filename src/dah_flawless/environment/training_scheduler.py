@@ -120,6 +120,7 @@ class TrainingScheduler:
                     blue_update_enabled=block.blue_update_enabled,
                     red_policy_state=red_policy_state,
                     blue_policy_state=blue_policy_state,
+                    previous_logs=all_logs,
                 )
                 red_policy_state = deepcopy(step_summary["red_policy_state"])
                 blue_policy_state = deepcopy(step_summary["blue_policy_state"])

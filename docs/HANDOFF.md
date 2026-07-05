@@ -1,6 +1,6 @@
 # DAH Flawless Handoff
 
-최종 갱신: 2026-07-04
+최종 갱신: 2026-07-06
 
 ## 현재 방향
 
@@ -31,6 +31,7 @@ raw_world
 - Blue는 raw_world와 scorer_truth/state["world"]를 볼 수 없다.
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Feedback Learner는 scorer feedback으로 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`를 업데이트한다.
+- Goal Planner는 이전 로그와 현재 observed context를 함께 보고 Red의 cyber-effect 목표를 고른다.
 - Policy Update Reviewer는 Red/Blue policy delta를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - Mutation Approval Reviewer는 Red observe mutation 후보를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - `src/dah_flawless/llm/`의 LLM Adapter가 역할별 외부 JSON 호출, schema 검증, 순수 코드 fallback을 공통 처리한다.
@@ -57,6 +58,7 @@ raw_world
 | `src/dah_flawless/world/feature_extractor.py` | raw_world feature extractor |
 | `src/dah_flawless/world/state_adapter.py` | raw_world -> MVP runtime state 변환 |
 | `src/dah_flawless/situation_tagger.py` | 공용 Situation Tagger |
+| `src/dah_flawless/attacks/goal_planner.py` | previous-log feedback 기반 Red cyber-effect goal planner |
 | `src/dah_flawless/attacks/selector.py` | Attack/Tactic scoring |
 | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed mutation engine |
 | `src/dah_flawless/blue/feedback_learner.py` | Blue scorer feedback learner |

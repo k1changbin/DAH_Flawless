@@ -111,7 +111,7 @@ Observer
 |---|---|
 | Observer | redacted state와 tag 입력 |
 | Situation Tagger | `src/dah_flawless/situation_tagger.py` |
-| Goal Planner | 경량/설명 수준. target domain으로 대체 |
+| Goal Planner | `src/dah_flawless/attacks/goal_planner.py`. 이전 로그와 현재 context 기반 cyber-effect 목표 선택 |
 | Attack Selector | `src/dah_flawless/attacks/selector.py` |
 | Mutation Policy | `configs/mutation_policy.yaml`, `docs/mutation_policy.md` |
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` |
@@ -204,6 +204,7 @@ for block in training_schedule:
 |---|---|---|
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
+| `GoalPlanner` | context + previous logs + UCB exploration으로 Red cyber-effect 목표 선택 | 구현 |
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
 | `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |

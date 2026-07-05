@@ -33,6 +33,7 @@ raw_world -> Feature Extractor -> State Adapter
 | Feature Extractor | `src/dah_flawless/world/feature_extractor.py` | 구현 |
 | State Adapter | `src/dah_flawless/world/state_adapter.py` | raw_world를 scorer_truth/blue_observed로 변환 |
 | Situation Tagger | `src/dah_flawless/situation_tagger.py` | 통신/텔레메트리/임무 태그 구현 |
+| Goal Planner | `src/dah_flawless/attacks/goal_planner.py` | 이전 로그와 현재 context 기반 cyber-effect 목표 선택 |
 | Attack Selector | `src/dah_flawless/attacks/selector.py` | 태그 기반 후보 점수화 |
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed 변조 |
 | EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
@@ -98,7 +99,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `79 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `85 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -110,6 +111,7 @@ python -m unittest discover -s tests
 | `truth_storage_key` | 현재 호환 키 `state["world"]` |
 | `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
+| `red_goal` | Red Goal Planner가 선택한 cyber-effect 목표 |
 | `blue_policy_state` | Blue의 domain trust, detection sensitivity, escalation threshold, feedback count |
 | `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
 | `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |

@@ -55,6 +55,7 @@ def run_simulation(
     blue_update_enabled: bool = True,
     red_policy_state: dict | None = None,
     blue_policy_state: dict | None = None,
+    previous_logs: list[dict] | None = None,
     policy_update_reviewer: PolicyUpdateReviewer | None = None,
     mutation_approval_reviewer: MutationApprovalReviewer | None = None,
 ) -> tuple[list[dict], dict]:
@@ -73,6 +74,7 @@ def run_simulation(
         policy_update_reviewer=reviewer,
     )
     logs: list[dict] = []
+    historical_logs = deepcopy(previous_logs or [])
     threat_history: list[list] = []
     recovery_history: list[dict[str, bool]] = []
     prev_hash = GENESIS_HASH
@@ -83,7 +85,11 @@ def run_simulation(
         pre_attack_tag_details = derive_tag_details(redacted_for_red, history, redacted_for_red["capabilities"])
         pre_attack_tags = [detail.tag for detail in pre_attack_tag_details]
         attack, stealth, red_tactic, red_choice_log = red_agent.choose_attack(
-            round_number, redacted_for_red, pre_attack_tags, pre_attack_tag_details
+            round_number,
+            redacted_for_red,
+            pre_attack_tags,
+            pre_attack_tag_details,
+            previous_logs=historical_logs + logs,
         )
 
         attacked_state, mutation_log = apply_attack(
@@ -127,8 +133,15 @@ def run_simulation(
         else:
             blue_policy_after, blue_update_log = freeze_blue_policy(blue_policy_before_round)
         apply_blue_policy_state(defended_state, blue_policy_after)
+        red_goal = deepcopy(red_tactic.get("goal_plan") or red_choice_log.get("after", {}).get("goal"))
         if red_update_enabled:
-            red_update_log = red_agent.update_weight(attack.name, score.detection_success)
+            red_update_log = red_agent.update_weight(
+                attack.name,
+                score.detection_success,
+                goal_id=(red_goal or {}).get("goal_id"),
+                score=score,
+                round_number=round_number,
+            )
         else:
             red_update_log = decision(
                 "RedAgent",
@@ -156,6 +169,7 @@ def run_simulation(
             "situation_tags": situation_tags,
             "attack": attack.to_dict(),
             "stealth": stealth,
+            "red_goal": red_goal,
             "red_tactic": red_tactic,
             "threats": [threat.to_dict() for threat in threats],
             "mission_risks": [risk.to_dict() for risk in risks],
@@ -218,6 +232,8 @@ def run_simulation(
 
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     return logs, summary
+
+
 def _advance_normal_state(state: dict, round_number: int) -> dict:
     next_state = deepcopy(state)
     next_state["round"] = round_number

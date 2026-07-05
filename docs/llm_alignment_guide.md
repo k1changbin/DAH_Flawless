@@ -35,7 +35,7 @@ raw_world
 -> Scorer/Admin 판정
 
 5. Red AI 구조는 다음 모듈로 설명한다.
-Observer -> Situation Tagger -> Goal Planner(현재는 설명/경량) -> Attack Selector
+Observer -> Situation Tagger -> Goal Planner -> Attack Selector
 -> Mutation Engine -> Stealth Controller -> Feedback Learner -> Decision Logger
 
 6. Blue AI 구조는 다음 모듈로 설명한다.
@@ -251,7 +251,7 @@ Observer
 |---|---|---|
 | Observer | 현재 redacted state, blue_observed, history, raw-world feature 요약을 읽음 | redaction 경로와 simulator 입력으로 구현 |
 | Situation Tagger | observed/feature에서 상황 태그 생성 | `situation_tagger.py`, `blue/tagger.py` |
-| Goal Planner | 어떤 효과를 노릴지 선택. 예: 복귀 지연, 오표적 선택, 명령 stale 처리 | 현재는 설명/경량. 공격 카탈로그의 target domain으로 대체 |
+| Goal Planner | 어떤 cyber-effect 목표를 노릴지 선택. 예: 오표적 선택, 명령 stale 처리, telemetry trust erosion | `attacks/goal_planner.py`. 현재 context와 이전 로그를 함께 보는 contextual UCB-style scoring |
 | Attack Selector | tag와 후보 점수로 공격 선택 | `attacks/selector.py`, `red_agent.py` |
 | Mutation Engine | blue_observed에 안전한 변조 적용 | `attacks/mutations.py` |
 | Stealth Controller | 변조 폭을 줄여 탐지 회피 시도 | `red_agent.py`, tactic `boundary_probe` |
@@ -522,6 +522,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | feature extractor | 구현 |
 | state adapter | 구현 |
 | situation tagger | 구현 |
+| goal planner | 구현 |
 | attack selector | 구현 |
 | mutation policy docs/config | 구현 |
 | mutation profile routing | 구현 |
