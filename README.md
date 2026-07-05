@@ -16,7 +16,9 @@ raw_world -> Feature Extractor -> State Adapter
 |---|---|---|
 | `raw_world` | 현실 전장에 존재하는 원천 신호·방출·환경·사건. 예: RF, GNSS, SATCOM, MAVLink-like C2 emission, 날씨, 지형 | generator/extractor/adapter |
 | `scorer_truth` | scorer가 채점에 쓰는 기준 상태. 현재 코드에서는 호환성 때문에 `state["world"]` 키에 저장 | environment/scorer/admin only |
-| `blue_observed` | Blue 관제 AI가 받은 관측 입력. Red의 직접 조작 대상 | Red/Blue |
+| `blue_observed` | Blue 관제 AI가 받은 관측 입력. 내부/외부 observe를 포함 | Red/Blue |
+| `internal_observe` | 내부 센서/로컬 상태 관측. Red가 직접 조작하지 못함 | Blue trust anchor |
+| `external_observe` | 외부 신호/통신/원격 관측. Red mutation의 허용 표면 | Red mutation surface |
 
 `state["world"]`는 이름 때문에 헷갈리지만 raw world가 아닙니다. 현재 MVP에서는 scorer-only 정답지이며, Red/Blue 입력에서는 redaction으로 제거됩니다.
 
@@ -25,12 +27,16 @@ raw_world -> Feature Extractor -> State Adapter
 | 모듈 | 파일 | 상태 |
 |---|---|---|
 | Raw World Schema | `configs/raw_world_schema.yaml`, `docs/raw_world_schema.md` | 구현 |
+| Mutation Policy | `configs/mutation_policy.yaml`, `docs/mutation_policy.md`, `src/dah_flawless/attacks/mutation_policy.py` | 핵심 필드 runtime clamp/reject 구현 |
 | World Generator | `src/dah_flawless/world/generator.py` | rule-based 구현 |
 | Feature Extractor | `src/dah_flawless/world/feature_extractor.py` | 구현 |
 | State Adapter | `src/dah_flawless/world/state_adapter.py` | raw_world를 scorer_truth/blue_observed로 변환 |
 | Situation Tagger | `src/dah_flawless/situation_tagger.py` | 통신/텔레메트리/임무 태그 구현 |
 | Attack Selector | `src/dah_flawless/attacks/selector.py` | 태그 기반 후보 점수화 |
-| Mutation Engine | `src/dah_flawless/attacks/mutations.py` | 안전한 observed 변조 |
+| Mutation Engine | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed 변조 |
+| EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
+| TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
+| Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain trust, detection sensitivity, escalation threshold 업데이트 |
 | Blue Defense | `src/dah_flawless/blue/` | 탐지, 임무위험, 단계방어 |
 | Scorer | `src/dah_flawless/scoring/scorer.py` | 승패, evidence, detection/recovery window |
 | Dashboard | `streamlit_app.py` | raw_world sample 입력, 로그 분석 |
@@ -47,12 +53,30 @@ $env:PYTHONPATH='src'
 python -m dah_flawless.main --seed 42 --rounds 5 --out data/logs/round_logs.jsonl --summary data/logs/summary.json
 ```
 
+보고서 기준 30-step episode로 실행하려면:
+
+```powershell
+python -m dah_flawless.main --seed 42 --episodes 2 --steps-per-episode 30 --out data/logs/episode_logs.jsonl --summary data/logs/episode_summary.json
+```
+
+Blue-only -> Red-only -> fixed-eval 학습 cadence로 실행하려면:
+
+```powershell
+python -m dah_flawless.main --seed 42 --training-schedule --steps-per-episode 30 --out data/logs/training_logs.jsonl --summary data/logs/training_summary.json
+```
+
+큰 시연값을 명시적으로 쓰려면:
+
+```powershell
+python -m dah_flawless.main --seed 42 --rounds 5 --mutation-profile loud_demo
+```
+
 Raw world 샘플부터 시작하려면:
 
 ```powershell
 $env:PYTHONPATH='src'
 python scripts/run_world_generator.py --count 1 --out tmp/world/raw_world.jsonl
-python scripts/run_feature_extractor.py --input tmp/world/raw_world.jsonl --out tmp/world/features.jsonl
+python scripts/run_feature_extractor.py --in tmp/world/raw_world.jsonl --out tmp/world/features.jsonl
 python -m dah_flawless.main --seed 42 --rounds 3 --raw-world-sample tmp/world/raw_world.jsonl
 ```
 
@@ -71,7 +95,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `38 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `65 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -82,6 +106,10 @@ python -m unittest discover -s tests
 | `truth_model` | 현재는 `scorer_truth` |
 | `truth_storage_key` | 현재 호환 키 `state["world"]` |
 | `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
+| `red_policy_state` | Red 공격 weight/probe 상태 |
+| `blue_policy_state` | Blue의 domain trust, detection sensitivity, escalation threshold, feedback count |
+| `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약 |
+| `block`, `episode`, `global_step` | TrainingScheduler/EpisodeRunner 실행 단위 |
 | `score.evidence.trusted_value` | scorer_truth 기준값 |
 | `score.evidence.observed_value` | Blue가 받은 값 |
 | `red_situation_tag_details` | Red가 공격 선택 전에 본 상황 태그 근거 |
@@ -94,6 +122,7 @@ docs/llm_alignment_guide.md
 -> docs/raw_world_schema.md
 -> docs/schema_design.md
 -> docs/field_formats.md
+-> docs/mutation_policy.md
 -> docs/situation_tags.md
 -> docs/attack_mapping.md
 -> docs/encrypted_channel_attack_ai.md
@@ -110,4 +139,5 @@ python scripts/print_llm_alignment_guide.py
 - `raw_world`는 현실 원천 신호, `scorer_truth`는 채점용 기준 상태, `blue_observed`는 AI가 받은 입력이라고 설명합니다.
 - `Scorer/Admin Diff`는 Blue 화면이 아니라 증거/채점 화면이라고 명시합니다.
 - Red는 암호를 깨거나 시스템을 장악하지 않고, `blue_observed`의 값·시간·순서·메타데이터를 안전한 mutation으로 변조한다고 설명합니다.
+- Mutation Approval LLM은 reviewer-only로 설명합니다. approve/clamp/reject/explain만 하며, 공격 선택·state 직접 수정·payload 생성 권한은 없습니다.
 - 실제 RF/API adapter와 VAE/RL/LLM 기반 고도화는 현재 구현이 아니라 다음 단계 설계로 구분합니다.

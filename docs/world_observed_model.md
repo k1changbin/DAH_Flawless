@@ -5,7 +5,9 @@
 ```text
 raw_world      = 현실 전장에 존재하는 원천 신호·방출·환경·사건
 scorer_truth   = scorer가 채점에 쓰는 기준 상태, 현재 코드 키는 state["world"]
-blue_observed  = Blue AI가 받은 관측 입력, Red가 조작하는 공격 표면
+blue_observed  = Blue AI가 받은 관측 입력 묶음
+internal_observe = Blue 내부 센서/로컬 상태 관측, Red 직접 조작 금지
+external_observe = 외부 신호/통신/원격 관측, Red mutation 허용 표면
 ```
 
 ## 1. raw_world
@@ -59,10 +61,10 @@ state["world"]["command"]["expected_sequence_number"] = 1021
 
 ```text
 state["world"]["uav"]["battery_percent"] = 20
-state["blue_observed"]["telemetry"]["battery_percent"] = 82
+state["blue_observed"]["telemetry"]["battery_percent"] = 82  # loud_demo profile example
 ```
 
-이 경우 scorer_truth 기준 배터리는 20%지만, Blue가 받은 입력은 82%다. Blue는 scorer_truth를 보지 않고 `blue_observed` 내부 모순, history, metadata, 불변식 위반으로 이상을 판단한다.
+이 경우 scorer_truth 기준 배터리는 20%지만, Blue가 받은 입력은 loud_demo profile 기준 82%다. 기본 profile은 `aggressive`이고, 이처럼 큰 값은 시연/하드케이스 용도로만 사용한다. Blue는 scorer_truth를 보지 않고 `blue_observed` 내부 모순, history, metadata, 불변식 위반으로 이상을 판단한다.
 
 ## 4. 변환 흐름
 

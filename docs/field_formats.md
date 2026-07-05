@@ -77,6 +77,12 @@ raw_world 필드는 docs/raw_world_schema.md와 configs/raw_world_schema.yaml을
 
 ## 3. Blue Observed Field Formats
 
+Observe v0.2 기준에서 `blue_observed`는 canonical하게 `internal_observe`와 `external_observe`로 나뉜다.
+
+- `blue_observed.internal_observe.*`: 내부 센서/로컬 상태 관측. Red 직접 mutation 금지.
+- `blue_observed.external_observe.*`: 외부 신호/통신/원격 관측. Red mutation 허용 표면.
+- `blue_observed.telemetry`, `blue_observed.navigation`, `blue_observed.mission`, `blue_observed.c2_message`, `blue_observed.comms`는 현재 MVP 코드 호환용 flat view이며 `external_observe`의 alias다.
+
 ### 3.1 Time
 
 | 경로 | 타입 | 단위/범위 | 예시 | 의미 |
@@ -88,7 +94,7 @@ raw_world 필드는 docs/raw_world_schema.md와 configs/raw_world_schema.yaml을
 
 | 경로 | 타입 | 단위/범위 | 예시 | 의미 |
 |---|---|---|---|---|
-| `blue_observed.telemetry.battery_percent` | `percent` | 0~100 | `82` | Blue가 받은 배터리 값 |
+| `blue_observed.telemetry.battery_percent` | `percent` | 0~100 | `82` | Blue가 받은 배터리 값. `82`는 `loud_demo` profile 예시 |
 | `blue_observed.telemetry.battery_drain_rate` | `float` | percent/round 또는 percent/min | `1.0` | Blue가 받은 배터리 소모율 |
 | `blue_observed.telemetry.motor_status` | enum string | `OK`, `DEGRADED`, `FAULT`, `UNKNOWN` | `"OK"` | Blue가 받은 모터 상태 |
 | `blue_observed.telemetry.altitude_m` | `float` | meters | `180` | Blue가 받은 고도 |

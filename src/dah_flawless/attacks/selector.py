@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from dah_flawless.config import DEFAULT_MUTATION_PROFILE, MUTATION_PROFILES
 from dah_flawless.schemas import Attack, SituationTag
 
 
@@ -19,6 +20,7 @@ class TacticSpec:
     detectability: float
     cost: float
     params: dict[str, Any] = field(default_factory=dict)
+    params_by_profile: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 TACTIC_CATALOG: tuple[TacticSpec, ...] = (
@@ -57,7 +59,11 @@ TACTIC_CATALOG: tuple[TacticSpec, ...] = (
         impact=2.1,
         detectability=0.9,
         cost=0.4,
-        params={"sequence_delta": -13, "timestamp_delta_s": -400},
+        params_by_profile={
+            "stealth": {"sequence_delta": -2, "timestamp_delta_s": -5},
+            "aggressive": {"sequence_delta": -8, "timestamp_delta_s": -45},
+            "loud_demo": {"sequence_delta": -13, "timestamp_delta_s": -400},
+        },
     ),
     TacticSpec(
         attack_name="TIME_DESYNC_REPLAY",
@@ -74,7 +80,11 @@ TACTIC_CATALOG: tuple[TacticSpec, ...] = (
         impact=1.9,
         detectability=0.7,
         cost=0.5,
-        params={"timestamp_delta_s": -180, "latency_ms": 900},
+        params_by_profile={
+            "stealth": {"timestamp_delta_s": -5, "latency_ms": 300, "packet_interval_jitter_ms": 150},
+            "aggressive": {"timestamp_delta_s": -45, "latency_ms": 720, "packet_interval_jitter_ms": 460},
+            "loud_demo": {"timestamp_delta_s": -180, "latency_ms": 900, "packet_interval_jitter_ms": 700},
+        },
     ),
     TacticSpec(
         attack_name="TIME_DESYNC_REPLAY",
@@ -90,7 +100,11 @@ TACTIC_CATALOG: tuple[TacticSpec, ...] = (
         impact=1.8,
         detectability=0.8,
         cost=0.7,
-        params={"packet_loss": 0.16, "heartbeat_gap_ms": 3600},
+        params_by_profile={
+            "stealth": {"packet_loss": 0.05, "heartbeat_gap_ms": 2000, "packet_interval_jitter_ms": 150},
+            "aggressive": {"packet_loss": 0.16, "heartbeat_gap_ms": 3600, "packet_interval_jitter_ms": 460},
+            "loud_demo": {"packet_loss": 0.30, "heartbeat_gap_ms": 6000, "packet_interval_jitter_ms": 800},
+        },
     ),
     TacticSpec(
         attack_name="TIME_DESYNC_REPLAY",
@@ -101,7 +115,11 @@ TACTIC_CATALOG: tuple[TacticSpec, ...] = (
         impact=2.0,
         detectability=0.65,
         cost=0.4,
-        params={"ack_delay_ms": 950, "ack_sequence_delta": -2},
+        params_by_profile={
+            "stealth": {"ack_delay_ms": 300, "ack_sequence_delta": -1, "latency_ms": 300},
+            "aggressive": {"ack_delay_ms": 950, "ack_sequence_delta": -2, "latency_ms": 540},
+            "loud_demo": {"ack_delay_ms": 1500, "ack_sequence_delta": -5, "latency_ms": 1200},
+        },
     ),
     TacticSpec(
         attack_name="TIME_DESYNC_REPLAY",
@@ -117,7 +135,11 @@ TACTIC_CATALOG: tuple[TacticSpec, ...] = (
         impact=1.9,
         detectability=0.85,
         cost=0.4,
-        params={"sequence_delta": -2, "timestamp_delta_s": -90},
+        params_by_profile={
+            "stealth": {"sequence_delta": -1, "timestamp_delta_s": -5, "latency_ms": 250},
+            "aggressive": {"sequence_delta": -2, "timestamp_delta_s": -45, "latency_ms": 620},
+            "loud_demo": {"sequence_delta": -8, "timestamp_delta_s": -90, "latency_ms": 1000},
+        },
     ),
 )
 
@@ -163,10 +185,13 @@ def build_tactic(
     stealth: bool,
     tag_details: list[SituationTag] | None,
     telemetry_probe_delta: int,
+    mutation_profile: str = DEFAULT_MUTATION_PROFILE,
 ) -> dict[str, Any]:
+    profile = _profile_for_tactic(stealth, mutation_profile)
     if stealth and attack_name == "TELEMETRY_FDI":
         return {
             "stealth": True,
+            "mutation_profile": profile,
             "strategy": "boundary_probe",
             "probe_delta": telemetry_probe_delta,
             "selector": "stealth_controller",
@@ -176,20 +201,23 @@ def build_tactic(
     if not tactic_scores:
         return {
             "stealth": stealth,
-            "strategy": "no_boundary_margin" if stealth else "loud",
+            "mutation_profile": profile,
+            "strategy": "no_boundary_margin" if stealth else "profile_direct_mutation",
             "selector": "fallback",
         }
 
     chosen = tactic_scores[0]
     return {
         "stealth": stealth,
+        "mutation_profile": profile,
         "strategy": chosen["strategy"],
         "goal": chosen["goal"],
         "selector": "tag_scored_tactic_policy",
         "score": chosen["score"],
         "score_breakdown": chosen["score_breakdown"],
         "matched_tags": chosen["matched_tags"],
-        "params": chosen["params"],
+        "params": _params_for_profile(chosen, profile),
+        "params_by_profile": chosen["params_by_profile"],
         "candidate_scores": tactic_scores,
     }
 
@@ -219,6 +247,7 @@ def score_tactic_candidates(attack_name: str, tag_details: list[SituationTag] | 
                 "score": score,
                 "matched_tags": matched_tags,
                 "params": dict(tactic.params),
+                "params_by_profile": {profile: dict(params) for profile, params in tactic.params_by_profile.items()},
                 "score_breakdown": {
                     "base_score": tactic.base_score,
                     "impact": tactic.impact,
@@ -235,3 +264,18 @@ def score_tactic_candidates(attack_name: str, tag_details: list[SituationTag] | 
 
 def _tag_confidence(tag_details: list[SituationTag] | None) -> dict[str, float]:
     return {detail.tag: detail.confidence for detail in tag_details or []}
+
+
+def _profile_for_tactic(stealth: bool, mutation_profile: str) -> str:
+    if stealth:
+        return "stealth"
+    if mutation_profile not in MUTATION_PROFILES:
+        return DEFAULT_MUTATION_PROFILE
+    return mutation_profile
+
+
+def _params_for_profile(candidate: dict[str, Any], profile: str) -> dict[str, Any]:
+    params_by_profile = candidate.get("params_by_profile") or {}
+    if profile in params_by_profile:
+        return dict(params_by_profile[profile])
+    return dict(candidate.get("params", {}))

@@ -2,6 +2,11 @@
 
 DEFAULT_SEED = 42
 DEFAULT_ROUNDS = 5
+DEFAULT_EPISODES = 1
+DEFAULT_STEPS_PER_EPISODE = 30
+DEFAULT_BLUE_UPDATE_EPISODES = 10
+DEFAULT_RED_UPDATE_EPISODES = 10
+DEFAULT_EVAL_EPISODES = 3
 
 CONFIDENCE_THRESHOLD = 0.60
 DETECTION_WINDOW = 2
@@ -35,12 +40,19 @@ SCRIPTED_ATTACKS = (
 SCENARIOS = ("clean_start", "degraded_start")
 DEFAULT_SCENARIO = "clean_start"
 
-# Red stealth modes: off = always loud, on = always stealth,
+# Red stealth modes: off = non-stealth mutation profile, on = always stealth,
 # adaptive = switch an attack to stealth after it is detected.
-# Default stays "off" so the baseline run reproduces the original loud results;
+# Default stays "off" so the baseline run uses the configured mutation profile;
 # stealth is opt-in via --red-stealth on|adaptive.
 STEALTH_MODES = ("off", "on", "adaptive")
 DEFAULT_STEALTH_MODE = "off"
+
+# Mutation profiles define the amplitude of safe simulator mutations.
+# stealth is the low-amplitude boundary-probe profile, aggressive is the
+# default report/training profile, and loud_demo keeps the old large demo values
+# isolated from normal training.
+MUTATION_PROFILES = ("stealth", "aggressive", "loud_demo")
+DEFAULT_MUTATION_PROFILE = "aggressive"
 
 # Capability degradation lowers Blue detection confidence (paralysis model).
 # A degraded cross-check / time-validation means Blue is less sure about the

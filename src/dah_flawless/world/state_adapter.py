@@ -7,6 +7,7 @@ import math
 from typing import Any
 
 from dah_flawless.environment.state_factory import create_baseline_state
+from dah_flawless.observation import refresh_internal_observe_from_truth, sync_external_observe_from_flat
 from dah_flawless.world.feature_extractor import RawWorldFeatureExtractor
 
 
@@ -40,6 +41,8 @@ def build_state_from_raw_world(
     _apply_uav_scene(state, raw_world)
     _apply_navigation_observation(state, features)
     _apply_c2_observation(state, raw_world, features)
+    sync_external_observe_from_flat(state["blue_observed"])
+    refresh_internal_observe_from_truth(state)
     _refresh_last_known_good(state)
     return state
 

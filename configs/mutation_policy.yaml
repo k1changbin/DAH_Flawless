@@ -1,0 +1,377 @@
+schema_id: dah.mutation_policy.v0_1
+purpose: >
+  Defines which Blue observe fields Red may mutate inside the DAH simulation,
+  how far each profile may move them, and which safety boundary applies.
+  This is not an instruction set for real RF, API, or network attacks.
+
+principles:
+  - "Red may directly mutate external_observe only."
+  - "Red must not directly mutate internal_observe."
+  - "Red must not mutate scorer_truth/state['world'] or raw_world."
+  - "Mutation values are simulator deltas, not real RF/API payloads."
+  - "Authentication may fail, disappear, or become stale; Red may not forge auth_valid=true."
+  - "loud_demo is for report demonstrations and hard-case tests, not default training."
+
+profiles:
+  stealth:
+    description: "Small perturbations near Blue's detection boundary."
+    default_training_allowed: true
+    scorer_label: "low-amplitude simulated observe mutation"
+  aggressive:
+    description: "Larger perturbations used when Red intentionally trades stealth for effect."
+    default_training_allowed: true
+    scorer_label: "high-amplitude simulated observe mutation"
+  loud_demo:
+    description: "Clearly visible mutation for reports, demos, and hard-case Blue tests."
+    default_training_allowed: false
+    scorer_label: "demonstration-only loud mutation"
+
+observe_scopes:
+  internal_observe:
+    mutable_by_red: false
+    reason: "Internal sensors and local vehicle state are Blue trust anchors."
+    examples:
+      - "blue_observed.internal_observe.telemetry.battery_percent"
+      - "blue_observed.internal_observe.inertial_navigation.position_estimate"
+      - "blue_observed.internal_observe.health"
+  external_observe:
+    mutable_by_red: true
+    reason: "External signals, messages, and remote reports can be delayed, dropped, distorted, or stale in simulation."
+    examples:
+      - "blue_observed.external_observe.time"
+      - "blue_observed.external_observe.telemetry"
+      - "blue_observed.external_observe.navigation"
+      - "blue_observed.external_observe.mission"
+      - "blue_observed.external_observe.c2_message"
+      - "blue_observed.external_observe.comms"
+
+global_forbidden_mutations:
+  - field: "blue_observed.internal_observe.*"
+    reason: "Internal observe is not directly reachable by Red."
+  - field: "state.world.*"
+    reason: "scorer_truth is scorer/admin only."
+  - field: "raw_world.*"
+    reason: "raw_world is generated external reality, not Red's runtime mutation target."
+  - field: "*.auth_valid"
+    forbidden_transition: "false_to_true"
+    reason: "The simulator may model auth failure or stale auth, but not forged successful authentication."
+  - field: "*.signature_present"
+    forbidden_transition: "false_to_true"
+    reason: "Do not model signature forgery as a successful Red capability."
+  - field: "*.payload_visible"
+    forbidden_transition: "false_to_true"
+    reason: "Red does not decrypt hidden payloads."
+
+field_policies:
+  - id: c2_latency_ms
+    field: "blue_observed.external_observe.comms.latency_ms"
+    legacy_alias: "blue_observed.comms.latency_ms"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min_ms: 50, delta_max_ms: 250}
+      aggressive: {delta_min_ms: 300, delta_max_ms: 1200}
+      loud_demo: {delta_min_ms: 1200, delta_max_ms: 1800}
+    reason: "C2/SATCOM-like channels can naturally show latency shifts, so delay is a plausible simulated external-observe mutation."
+    blue_detection_hints: ["HIGH_LATENCY", "TIMESTAMP_SKEW", "ACK_TIMING_ANOMALY"]
+
+  - id: c2_packet_interval_jitter_ms
+    field: "blue_observed.external_observe.comms.packet_interval_jitter_ms"
+    legacy_alias: "blue_observed.comms.packet_interval_jitter_ms"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min_ms: 50, delta_max_ms: 150}
+      aggressive: {delta_min_ms: 300, delta_max_ms: 700}
+      loud_demo: {delta_min_ms: 700, delta_max_ms: 1000}
+    reason: "Periodic C2 traffic makes jitter a useful safe abstraction for delay/reordering without real network actions."
+    blue_detection_hints: ["PACKET_INTERVAL_ANOMALY", "REGULAR_PACKET_INTERVAL"]
+
+  - id: c2_packet_loss
+    field: "blue_observed.external_observe.comms.packet_loss"
+    legacy_alias: "blue_observed.comms.packet_loss"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: set_or_add_clamped
+    profiles:
+      stealth: {delta_min_ratio: 0.02, delta_max_ratio: 0.05, absolute_max: 0.08}
+      aggressive: {absolute_min: 0.10, absolute_max: 0.25}
+      loud_demo: {absolute_min: 0.25, absolute_max: 0.40}
+    reason: "Packet loss is a channel-level effect. Above 0.25 should usually be treated as obvious link failure."
+    blue_detection_hints: ["PACKET_LOSS_HIGH", "SEQUENCE_GAP", "HEARTBEAT_GAP"]
+
+  - id: c2_heartbeat_gap_ms
+    field: "blue_observed.external_observe.comms.heartbeat_gap_ms"
+    legacy_alias: "blue_observed.comms.heartbeat_gap_ms"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: set_clamped
+    profiles:
+      stealth: {missed_beats_min: 1, missed_beats_max: 2}
+      aggressive: {missed_beats_min: 3, missed_beats_max: 5}
+      loud_demo: {missed_beats_min: 5, missed_beats_max: 8}
+    depends_on: "blue_observed.external_observe.comms.heartbeat_interval_ms"
+    reason: "Heartbeat gaps model stale or missing C2/status updates."
+    blue_detection_hints: ["HEARTBEAT_GAP", "PACKET_LOSS_HIGH"]
+
+  - id: c2_sequence_number
+    field: "blue_observed.external_observe.c2_message.sequence_number"
+    legacy_alias: "blue_observed.c2_message.sequence_number"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min: -3, delta_max: 3}
+      aggressive: {delta_min: -12, delta_max: 12}
+      loud_demo: {delta_min: -24, delta_max: 24}
+    notes:
+      - "Policy user must handle protocol wraparound separately."
+      - "Prefer small stale or gap mutations before large regressions."
+    reason: "MAVLink-like metadata makes sequence drift, gaps, and stale messages observable without decrypting payloads."
+    blue_detection_hints: ["SEQUENCE_REGRESSION", "SEQUENCE_GAP", "REPLAY_SUSPECTED"]
+
+  - id: c2_received_timestamp
+    field: "blue_observed.external_observe.time.received_timestamp"
+    legacy_alias: "blue_observed.time.received_timestamp"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: add_clamped_seconds
+    profiles:
+      stealth: {delta_min_s: -5, delta_max_s: 5}
+      aggressive: {delta_min_s: -60, delta_max_s: 60}
+      loud_demo: {delta_min_s: -400, delta_max_s: 400}
+    reason: "Timestamp skew models stale or delayed external messages. Large values are demonstration-only."
+    blue_detection_hints: ["TIMESTAMP_SKEW", "REPLAY_SUSPECTED", "ACK_TIMING_ANOMALY"]
+
+  - id: c2_command
+    field: "blue_observed.external_observe.c2_message.command"
+    legacy_alias: "blue_observed.c2_message.command"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: set_enum
+    allowed_values: ["CONTINUE_MISSION", "RETURN_TO_BASE", "HOLD_POSITION", "ENTER_SAFE_MODE"]
+    profiles:
+      stealth: {allowed_values: ["CONTINUE_MISSION", "RETURN_TO_BASE", "HOLD_POSITION"]}
+      aggressive: {allowed_values: ["CONTINUE_MISSION", "RETURN_TO_BASE", "HOLD_POSITION", "ENTER_SAFE_MODE"]}
+      loud_demo: {allowed_values: ["CONTINUE_MISSION", "RETURN_TO_BASE", "HOLD_POSITION", "ENTER_SAFE_MODE"]}
+    reason: "Command mutation is limited to simulated stale/visible command labels, not payload forgery."
+    blue_detection_hints: ["TIMESTAMP_SKEW", "REPLAY_SUSPECTED", "COMMAND_TIMING_INCONSISTENT"]
+
+  - id: c2_ack_sequence_number
+    field: "blue_observed.external_observe.c2_message.ack.sequence_number"
+    legacy_alias: "blue_observed.c2_message.ack.sequence_number"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min: -1, delta_max: 1}
+      aggressive: {delta_min: -5, delta_max: 5}
+      loud_demo: {delta_min: -10, delta_max: 10}
+    reason: "ACK confusion is modeled as metadata inconsistency, not payload compromise."
+    blue_detection_hints: ["ACK_TIMING_ANOMALY", "SEQUENCE_GAP"]
+
+  - id: c2_ack_delay_ms
+    field: "blue_observed.external_observe.comms.ack_delay_ms"
+    legacy_alias: "blue_observed.comms.ack_delay_ms"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min_ms: 100, delta_max_ms: 300}
+      aggressive: {delta_min_ms: 500, delta_max_ms: 1200}
+      loud_demo: {delta_min_ms: 1200, delta_max_ms: 1800}
+    reason: "ACK delay is a safe visible metadata signal for delayed or inconsistent command handling."
+    blue_detection_hints: ["ACK_TIMING_ANOMALY", "HIGH_LATENCY"]
+
+  - id: c2_auth_valid
+    field: "blue_observed.external_observe.c2_message.auth_valid"
+    legacy_alias: "blue_observed.c2_message.auth_valid"
+    observe_scope: external_observe
+    target_domain: command
+    mutable: true
+    mutation_kind: degrade_only
+    allowed_values: [false]
+    forbidden_values: [true]
+    profiles:
+      stealth: {allowed: false}
+      aggressive: {allowed: false}
+      loud_demo: {allowed: false}
+    reason: "The simulator may model failed validation or missing trust, but must not model successful forgery."
+    blue_detection_hints: ["AUTH_INVALID", "C2_METADATA_SUSPECT"]
+
+  - id: gnss_satellite_count
+    field: "blue_observed.external_observe.navigation.satellite_count"
+    legacy_alias: "blue_observed.navigation.satellite_count"
+    observe_scope: external_observe
+    target_domain: navigation
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min: -2, delta_max: -1}
+      aggressive: {delta_min: -6, delta_max: -3}
+      loud_demo: {delta_min: -8, delta_max: -6}
+    reason: "External GNSS reception quality may degrade through jamming, masking, or multipath abstractions."
+    blue_detection_hints: ["GNSS_DEGRADED", "GNSS_INTERNAL_CONFLICT"]
+
+  - id: gnss_cn0_avg
+    field: "blue_observed.external_observe.navigation.cn0_avg"
+    legacy_alias: "blue_observed.navigation.cn0_avg"
+    observe_scope: external_observe
+    target_domain: navigation
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min_dbhz: -5, delta_max_dbhz: -2}
+      aggressive: {delta_min_dbhz: -12, delta_max_dbhz: -6}
+      loud_demo: {delta_min_dbhz: -20, delta_max_dbhz: -12}
+    reason: "C/N0 degradation is a common GNSS signal-quality symptom."
+    blue_detection_hints: ["GNSS_DEGRADED", "GNSS_INTERNAL_CONFLICT"]
+
+  - id: gnss_hdop
+    field: "blue_observed.external_observe.navigation.hdop"
+    legacy_alias: "blue_observed.navigation.hdop"
+    observe_scope: external_observe
+    target_domain: navigation
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min: 0.3, delta_max: 1.5}
+      aggressive: {delta_min: 2.0, delta_max: 6.0}
+      loud_demo: {delta_min: 6.0, delta_max: 10.0}
+    reason: "HDOP is a safe abstraction for degraded GNSS geometry and confidence."
+    blue_detection_hints: ["GNSS_DEGRADED", "GNSS_INTERNAL_CONFLICT"]
+
+  - id: external_telemetry_battery_percent
+    field: "blue_observed.external_observe.telemetry.battery_percent"
+    legacy_alias: "blue_observed.telemetry.battery_percent"
+    observe_scope: external_observe
+    target_domain: telemetry
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min_percent: -8, delta_max_percent: 8}
+      aggressive: {delta_min_percent: -25, delta_max_percent: 25}
+      loud_demo: {absolute_min_percent: 0, absolute_max_percent: 100}
+    reason: "External telemetry can be stale or falsely reported, but internal battery observe remains unchanged."
+    blue_detection_hints: ["TELEMETRY_CONFLICT", "BATTERY_ENERGY_IMPOSSIBLE"]
+
+  - id: external_telemetry_battery_drain_rate
+    field: "blue_observed.external_observe.telemetry.battery_drain_rate"
+    legacy_alias: "blue_observed.telemetry.battery_drain_rate"
+    observe_scope: external_observe
+    target_domain: telemetry
+    mutable: true
+    mutation_kind: add_clamped
+    profiles:
+      stealth: {delta_min: -0.3, delta_max: 0.3}
+      aggressive: {delta_min: -1.0, delta_max: 1.0}
+      loud_demo: {delta_min: -2.0, delta_max: 2.0}
+    reason: "Battery rate perturbation is useful only when checked against battery percent and motor state."
+    blue_detection_hints: ["BATTERY_ENERGY_IMPOSSIBLE", "TELEMETRY_CONFLICT"]
+
+  - id: external_telemetry_motor_status
+    field: "blue_observed.external_observe.telemetry.motor_status"
+    legacy_alias: "blue_observed.telemetry.motor_status"
+    observe_scope: external_observe
+    target_domain: telemetry
+    mutable: true
+    mutation_kind: set_enum
+    allowed_values: ["OK", "DEGRADED", "FAULT", "UNKNOWN"]
+    profiles:
+      stealth: {allowed_values: ["DEGRADED", "UNKNOWN"]}
+      aggressive: {allowed_values: ["OK", "DEGRADED", "FAULT", "UNKNOWN"]}
+      loud_demo: {allowed_values: ["OK", "DEGRADED", "FAULT", "UNKNOWN"]}
+    reason: "External status reports can disagree with internal health; Blue should cross-check."
+    blue_detection_hints: ["BATTERY_MOTOR_INCONSISTENT", "TELEMETRY_CONFLICT"]
+
+  - id: external_telemetry_motion
+    fields:
+      - "blue_observed.external_observe.telemetry.speed_mps"
+      - "blue_observed.external_observe.telemetry.heading_deg"
+      - "blue_observed.external_observe.telemetry.altitude_m"
+    legacy_aliases:
+      - "blue_observed.telemetry.speed_mps"
+      - "blue_observed.telemetry.heading_deg"
+      - "blue_observed.telemetry.altitude_m"
+    observe_scope: external_observe
+    target_domain: telemetry
+    mutable: true
+    mutation_kind: relative_or_absolute_clamped
+    profiles:
+      stealth: {relative_delta_max: 0.10, heading_delta_max_deg: 5, altitude_delta_max_m: 8}
+      aggressive: {relative_delta_max: 0.30, heading_delta_max_deg: 20, altitude_delta_max_m: 30}
+      loud_demo: {relative_delta_max: 0.50, heading_delta_max_deg: 45, altitude_delta_max_m: 80}
+    reason: "Motion telemetry can be externally stale or distorted, while internal inertial observe remains a cross-check."
+    blue_detection_hints: ["IMU_TELEMETRY_DIVERGENCE", "TELEMETRY_CONFLICT"]
+
+  - id: mission_area_priority
+    field: "blue_observed.external_observe.mission.area_priority"
+    legacy_alias: "blue_observed.mission.area_priority"
+    observe_scope: external_observe
+    target_domain: mission
+    mutable: true
+    mutation_kind: vector_shift_normalized
+    profiles:
+      stealth: {per_area_delta_max: 0.15}
+      aggressive: {per_area_delta_max: 0.45}
+      loud_demo: {per_area_delta_max: 0.80}
+    constraints:
+      - "Values must remain in [0.0, 1.0]."
+      - "Prefer normalized or explainably ranked priorities."
+    reason: "Mission/target belief can be poisoned as external decision support, not as scorer truth."
+    blue_detection_hints: ["MISSION_PRIORITY_CHANGED", "MISSION_EVIDENCE_MISSING"]
+
+  - id: mission_recommended_area
+    field: "blue_observed.external_observe.mission.recommended_area"
+    legacy_alias: "blue_observed.mission.recommended_area"
+    observe_scope: external_observe
+    target_domain: mission
+    mutable: true
+    mutation_kind: set_enum
+    allowed_values: ["A", "B", "C", "NONE"]
+    profiles:
+      stealth: {allowed_if_priority_margin_under: 0.15}
+      aggressive: {allowed_if_priority_margin_under: 0.45}
+      loud_demo: {allowed: true}
+    reason: "Area recommendation should follow poisoned mission belief, not appear from nowhere."
+    blue_detection_hints: ["MISSION_PRIORITY_CHANGED", "MISSION_EVIDENCE_MISSING"]
+
+approval_llm_contract:
+  role: "reviewer_only"
+  placement: "after deterministic MutationPolicy lookup, before Mutation Engine apply"
+  authority: "advisory_gate"
+  allowed_actions:
+    - "Approve a proposed simulated mutation that already fits this policy."
+    - "Recommend clamping a requested delta to a smaller allowed value."
+    - "Reject a proposed mutation that violates observe scope, profile limits, or safety boundaries."
+    - "Explain the policy reason for approve, clamp, or reject."
+  forbidden_actions:
+    - "Select attacks, goals, or tactics for Red."
+    - "Invent new target fields or increase the requested mutation amplitude."
+    - "Directly modify blue_observed, internal_observe, scorer_truth/state['world'], or raw_world."
+    - "Generate real RF/API instructions, exploit payloads, malware, or credential guidance."
+    - "Convert failed or missing authentication into successful authentication."
+  conflict_rule: "If LLM output conflicts with deterministic policy, deterministic policy wins."
+  execution_boundary: "Mutation Engine applies the final approved simulated mutation; the LLM never writes state."
+  must_output:
+    - approved
+    - clamped_delta
+    - reason
+    - allowed_fields
+    - safety_boundary
+  must_reject:
+    - "Any request touching internal_observe directly."
+    - "Any request touching scorer_truth/state['world'] or raw_world."
+    - "Any request containing real RF/API instructions or exploit payloads."
+    - "Any request that turns failed authentication into successful authentication."

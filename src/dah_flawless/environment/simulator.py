@@ -9,6 +9,13 @@ from typing import Optional
 from dah_flawless.attacks.mutations import apply_attack
 from dah_flawless.attacks.red_agent import RedAgent
 from dah_flawless.blue.defense_planner import apply_defense_actions, plan_defense
+from dah_flawless.blue.feedback_learner import (
+    apply_blue_policy_state,
+    apply_detection_policy,
+    export_blue_policy_state,
+    freeze_blue_policy,
+    update_blue_policy,
+)
 from dah_flawless.blue.incident_report import write_incident_report
 from dah_flawless.blue.mission_monitor import estimate_mission_risk
 from dah_flawless.blue.threat_detection import detect_threats
@@ -18,6 +25,7 @@ from dah_flawless.config import (
     DEFAULT_ROUNDS,
     DEFAULT_SCENARIO,
     DEFAULT_SEED,
+    DEFAULT_MUTATION_PROFILE,
     DEFAULT_STEALTH_MODE,
     ROUND_SECONDS,
     TRUST_BUDGET_RECOVERY_PER_ROUND,
@@ -25,8 +33,10 @@ from dah_flawless.config import (
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
+from dah_flawless.observation import refresh_internal_observe_from_truth, sync_external_observe_from_flat
 from dah_flawless.scoring.metrics import summarize_logs
 from dah_flawless.scoring.scorer import score_round
+from dah_flawless.schemas import decision
 from dah_flawless.situation_tagger import derive_tag_details
 
 
@@ -37,12 +47,24 @@ def run_simulation(
     summary_path: Optional[Path] = None,
     scenario: str = DEFAULT_SCENARIO,
     stealth_mode: str = DEFAULT_STEALTH_MODE,
+    mutation_profile: str = DEFAULT_MUTATION_PROFILE,
     initial_state: dict | None = None,
+    red_update_enabled: bool = True,
+    blue_update_enabled: bool = True,
+    red_policy_state: dict | None = None,
+    blue_policy_state: dict | None = None,
 ) -> tuple[list[dict], dict]:
     state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(seed, scenario)
+    if blue_policy_state is not None:
+        apply_blue_policy_state(state, blue_policy_state)
     scenario_label = state.get("scenario", scenario)
     history = make_history(state)
-    red_agent = RedAgent(seed, stealth_mode=stealth_mode)
+    red_agent = RedAgent(
+        seed,
+        stealth_mode=stealth_mode,
+        mutation_profile=mutation_profile,
+        policy_state=red_policy_state,
+    )
     logs: list[dict] = []
     threat_history: list[list] = []
     recovery_history: list[dict[str, bool]] = []
@@ -64,9 +86,13 @@ def run_simulation(
         situation_tags, threats, threat_log = detect_threats(
             redacted_for_blue, history, attacked_state["capabilities"]
         )
+        threats, blue_detection_policy_log = apply_detection_policy(threats, export_blue_policy_state(attacked_state))
         risks, risk_log = estimate_mission_risk(redacted_for_blue, threats)
         actions, defense_log = plan_defense(threats, risks, attacked_state["mission"], attacked_state["defense_runtime"])
+        blue_policy_before_round = export_blue_policy_state(attacked_state)
         defended_state = apply_defense_actions(attacked_state, actions, history, threats, attacked_state["capabilities"])
+        if not blue_update_enabled:
+            apply_blue_policy_state(defended_state, blue_policy_before_round)
         score = score_round(
             pre_defense_state,
             defended_state,
@@ -77,12 +103,36 @@ def run_simulation(
             recovery_history=recovery_history,
         )
         report, report_log = write_incident_report(threats, risks, actions, score)
-        red_update_log = red_agent.update_weight(attack.name, score.detection_success)
+        if blue_update_enabled:
+            blue_policy_after, blue_update_log = update_blue_policy(
+                export_blue_policy_state(defended_state),
+                score,
+                threats,
+                actions,
+            )
+        else:
+            blue_policy_after, blue_update_log = freeze_blue_policy(blue_policy_before_round)
+        apply_blue_policy_state(defended_state, blue_policy_after)
+        if red_update_enabled:
+            red_update_log = red_agent.update_weight(attack.name, score.detection_success)
+        else:
+            red_update_log = decision(
+                "RedAgent",
+                "weight_update_skipped",
+                "red_policy_frozen",
+                before={"attack": attack.name, "detected": score.detection_success},
+                after=red_agent.export_policy_state(),
+            )
 
         entry_without_hash = {
             "round": round_number,
             "seed": seed,
             "scenario": scenario_label,
+            "mutation_profile": mutation_profile,
+            "update_mode": {
+                "red_update_enabled": red_update_enabled,
+                "blue_update_enabled": blue_update_enabled,
+            },
             "truth_model": "scorer_truth",
             "truth_storage_key": 'state["world"]',
             "raw_world_source_hash": state["world"].get("raw_world_hash"),
@@ -98,13 +148,26 @@ def run_simulation(
             "defense_actions": defended_state["defense_runtime"]["active_defenses"],
             "score": score.to_dict(),
             "incident_report": report,
+            "red_policy_state": red_agent.export_policy_state(),
+            "blue_policy_state": export_blue_policy_state(defended_state),
+            "feedback": {
+                "red_policy_updated": red_update_enabled,
+                "blue_policy_updated": blue_update_enabled,
+                "winner": score.winner,
+                "target_domain": attack.target_domain,
+                "attack_success": score.attack_success,
+                "detection_success": score.detection_success,
+                "recovery_success": score.recovery_success,
+            },
             "decision_log": [
                 red_choice_log,
                 mutation_log,
                 threat_log,
+                blue_detection_policy_log,
                 risk_log,
                 defense_log,
                 report_log,
+                blue_update_log,
                 red_update_log,
             ],
             "red_input_redacted": "world" not in redacted_for_red,
@@ -124,6 +187,13 @@ def run_simulation(
     summary = summarize_logs(logs)
     summary["scenario"] = scenario_label
     summary["stealth_mode"] = stealth_mode
+    summary["mutation_profile"] = mutation_profile
+    summary["update_mode"] = {
+        "red_update_enabled": red_update_enabled,
+        "blue_update_enabled": blue_update_enabled,
+    }
+    summary["red_policy_state"] = red_agent.export_policy_state()
+    summary["blue_policy_state"] = export_blue_policy_state(state)
     if state["world"].get("raw_world_hash"):
         summary["raw_world_source_hash"] = state["world"]["raw_world_hash"]
     if log_path is not None:
@@ -134,8 +204,6 @@ def run_simulation(
 
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     return logs, summary
-
-
 def _advance_normal_state(state: dict, round_number: int) -> dict:
     next_state = deepcopy(state)
     next_state["round"] = round_number
@@ -164,6 +232,8 @@ def _advance_normal_state(state: dict, round_number: int) -> dict:
     obs["telemetry"]["battery_percent"] = next_state["world"]["uav"]["battery_percent"]
     obs["telemetry"]["battery_drain_rate"] = next_state["world"]["uav"]["battery_drain_rate"]
     obs["telemetry"]["motor_status"] = next_state["world"]["uav"]["motor_status"]
+    sync_external_observe_from_flat(obs)
+    refresh_internal_observe_from_truth(next_state)
     return next_state
 
 

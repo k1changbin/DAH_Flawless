@@ -14,7 +14,7 @@ import random
 
 from dah_flawless.attacks.catalog import get_attack, realistic_attacks
 from dah_flawless.attacks.selector import build_tactic, score_attack_candidates
-from dah_flawless.config import DEFAULT_STEALTH_MODE, SCRIPTED_ATTACKS
+from dah_flawless.config import DEFAULT_MUTATION_PROFILE, DEFAULT_STEALTH_MODE, SCRIPTED_ATTACKS
 from dah_flawless.schemas import Attack, SituationTag, decision
 
 
@@ -24,13 +24,17 @@ class RedAgent:
         seed: int,
         scripted_attacks: tuple[str, ...] = SCRIPTED_ATTACKS,
         stealth_mode: str = DEFAULT_STEALTH_MODE,
+        mutation_profile: str = DEFAULT_MUTATION_PROFILE,
+        policy_state: dict | None = None,
     ):
         self._rng = random.Random(seed)
         self._scripted_attacks = scripted_attacks
         self._stealth_mode = stealth_mode
+        self._mutation_profile = mutation_profile
         self._weights = {attack.name: attack.weight for attack in realistic_attacks()}
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
+        self.load_policy_state(policy_state)
 
     def choose_attack(
         self,
@@ -104,7 +108,13 @@ class RedAgent:
         stealth: bool,
         tag_details: list[SituationTag] | None,
     ) -> dict:
-        return build_tactic(attack_name, stealth, tag_details, self._telemetry_probe_delta)
+        return build_tactic(
+            attack_name,
+            stealth,
+            tag_details,
+            self._telemetry_probe_delta,
+            mutation_profile=self._mutation_profile,
+        )
 
     def update_weight(self, attack_name: str, detected: bool) -> dict:
         before = self._weights.get(attack_name, 0.0)
@@ -125,6 +135,26 @@ class RedAgent:
             before=before,
             after={"weight": after, "telemetry_probe_delta": self._telemetry_probe_delta},
         )
+
+    def load_policy_state(self, policy_state: dict | None) -> None:
+        if not policy_state:
+            return
+        weights = policy_state.get("weights", {})
+        for attack_name in self._weights:
+            if attack_name in weights:
+                self._weights[attack_name] = float(weights[attack_name])
+        self._stealth_for = set(policy_state.get("stealth_for", []))
+        if "telemetry_probe_delta" in policy_state:
+            self._telemetry_probe_delta = int(policy_state["telemetry_probe_delta"])
+
+    def export_policy_state(self) -> dict:
+        return {
+            "weights": dict(sorted(self._weights.items())),
+            "stealth_for": sorted(self._stealth_for),
+            "telemetry_probe_delta": self._telemetry_probe_delta,
+            "stealth_mode": self._stealth_mode,
+            "mutation_profile": self._mutation_profile,
+        }
 
 
 def _tag_context(tags: list[str], tag_details: list[SituationTag] | None) -> dict:

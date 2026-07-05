@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from dah_flawless.blue.feedback_learner import default_blue_policy_state
 from dah_flawless.config import BASE_TIMESTAMP, DEFAULT_SCENARIO
+from dah_flawless.observation import build_blue_observed
 
 
 def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
@@ -48,7 +50,30 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
         },
     }
 
-    blue_observed = {
+    internal_observe = {
+        "time": {
+            "true_timestamp": BASE_TIMESTAMP,
+            "round": 0,
+            "local_clock_offset_ms": 430,
+        },
+        "telemetry": {
+            "battery_percent": 20,
+            "battery_drain_rate": 1.0,
+            "motor_status": "FAULT",
+        },
+        "inertial_navigation": {
+            "position_estimate": {"lat": 37.123, "lon": 127.456, "altitude_m": 180},
+            "speed_mps": 42,
+            "heading_deg": 91,
+            "altitude_m": 180,
+        },
+        "health": {
+            "source": "internal_observe",
+            "red_direct_mutation_allowed": False,
+        },
+    }
+
+    external_observe = {
         "time": {"received_timestamp": BASE_TIMESTAMP, "local_clock_offset_ms": 430},
         "telemetry": {
             "battery_percent": 20,
@@ -114,6 +139,10 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             },
         },
     }
+    blue_observed = build_blue_observed(
+        internal_observe=internal_observe,
+        external_observe=external_observe,
+    )
 
     mission = {"availability": 1.0, "trust_budget": 1.0}
     capabilities = {
@@ -132,6 +161,8 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
         blue_observed["navigation"]["satellite_count"] = 4
         blue_observed["navigation"]["hdop"] = 6.2
 
+    blue_policy = default_blue_policy_state()
+
     return {
         "round": 0,
         "seed": seed,
@@ -144,7 +175,10 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "active_defense_slots": 2,
             "active_defenses": [],
             "pending_defenses": [],
-            "domain_trust": {"telemetry": 1.0, "mission": 1.0, "command": 1.0},
+            "domain_trust": deepcopy(blue_policy["domain_trust"]),
+            "detection_sensitivity": deepcopy(blue_policy["detection_sensitivity"]),
+            "escalation_threshold": deepcopy(blue_policy["escalation_threshold"]),
+            "feedback_counts": deepcopy(blue_policy["feedback_counts"]),
         },
         "last_known_good": deepcopy(blue_observed),
     }

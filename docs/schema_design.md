@@ -84,6 +84,74 @@ blue_observed
 
 ## 4. Blue Observed Schema
 
+Blue가 받는 observe는 이제 두 층으로 정의한다.
+
+```text
+blue_observed
+  internal_observe  # 내부 센서/로컬 상태. Red가 직접 바꾸면 안 됨.
+  external_observe  # 외부 신호/통신/원격 관측. Red mutation의 허용 표면.
+  legacy flat view  # 현재 MVP 코드 호환용 telemetry/navigation/mission/c2_message/comms 키.
+```
+
+### 4.1 Canonical Observe Model
+
+```json
+{
+  "blue_observed": {
+    "observe_schema_version": "dah.observe.v0_2",
+    "internal_observe": {
+      "time": {
+        "true_timestamp": 1710001200,
+        "round": 3,
+        "local_clock_offset_ms": 430
+      },
+      "telemetry": {
+        "battery_percent": 20,
+        "battery_drain_rate": 1.0,
+        "motor_status": "FAULT"
+      },
+      "inertial_navigation": {
+        "position_estimate": {
+          "lat": 37.123,
+          "lon": 127.456,
+          "altitude_m": 180
+        },
+        "speed_mps": 42,
+        "heading_deg": 91,
+        "altitude_m": 180
+      },
+      "health": {
+        "source": "internal_observe",
+        "red_direct_mutation_allowed": false
+      }
+    },
+    "external_observe": {
+      "time": {},
+      "telemetry": {},
+      "navigation": {},
+      "mission": {},
+      "c2_message": {},
+      "comms": {}
+    },
+    "observe_access": {
+      "red_direct_mutation": {
+        "internal_observe": false,
+        "external_observe": true,
+        "allowed_external_domains": ["time", "telemetry", "navigation", "mission", "c2_message", "comms"]
+      },
+      "blue_can_read": {
+        "internal_observe": true,
+        "external_observe": true
+      }
+    }
+  }
+}
+```
+
+### 4.2 Compatibility Flat View
+
+현재 MVP 코드와 테스트는 아직 `blue_observed.telemetry`, `blue_observed.navigation` 같은 flat key를 읽는다. 이 flat key들은 canonical 구조에서 `external_observe`의 alias다. 새 설계와 보고서에서는 `external_observe.telemetry`가 Red mutation 대상이라고 설명하고, 기존 flat key는 구현 호환용 view라고 설명한다.
+
 ```json
 {
   "blue_observed": {
@@ -151,6 +219,8 @@ blue_observed
   }
 }
 ```
+
+위 flat view 예시의 `battery_percent: 82`, `area_priority.C: 0.95` 같은 큰 변조값은 `loud_demo` profile 예시다. 기본 학습/보고서 실행 profile은 `aggressive`이며, 일반 실행에서는 더 작은 delta를 사용한다.
 
 ## 5. 공격 3종이 반드시 쓰는 필드
 

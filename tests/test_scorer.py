@@ -10,6 +10,7 @@ class ScorerTests(unittest.TestCase):
         attack = get_attack("TELEMETRY_FDI")
         pre = create_baseline_state(seed=1)
         post = create_baseline_state(seed=1)
+        # Direct loud_demo hard case for scorer behavior, not the default mutation profile.
         pre["blue_observed"]["telemetry"]["battery_percent"] = 82
         pre["blue_observed"]["telemetry"]["motor_status"] = "OK"
 
@@ -23,6 +24,7 @@ class ScorerTests(unittest.TestCase):
         attack = get_attack("PRIORITY_POISONING")
         pre = create_baseline_state(seed=1)
         post = create_baseline_state(seed=1)
+        # Direct loud_demo hard case for scorer behavior, not the default mutation profile.
         pre["blue_observed"]["mission"]["area_priority"] = {"A": 0.2, "B": 0.4, "C": 0.95}
         post["mission"]["availability"] = 0.4
 
@@ -38,6 +40,7 @@ class ScorerTests(unittest.TestCase):
         attack = get_attack("TELEMETRY_FDI")
         pre = create_baseline_state(seed=1)
         post = create_baseline_state(seed=1)
+        # Direct loud_demo hard case for scorer behavior, not the default mutation profile.
         pre["blue_observed"]["telemetry"]["battery_percent"] = 82
         pre["blue_observed"]["telemetry"]["motor_status"] = "OK"
 

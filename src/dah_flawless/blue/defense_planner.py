@@ -13,6 +13,7 @@ from dah_flawless.config import (
     TRUST_RESTORE_BONUS,
     TRUSTED_RESTORE_DEGRADED_COST_MULTIPLIER,
 )
+from dah_flawless.observation import sync_external_observe_from_flat
 from dah_flawless.schemas import DefenseAction, MissionRisk, Threat, decision
 
 
@@ -23,11 +24,14 @@ def plan_defense(
     defense_runtime: dict | None = None,
 ) -> tuple[list[DefenseAction], dict]:
     actions: list[DefenseAction] = []
-    domain_trust = (defense_runtime or {}).get("domain_trust", {})
+    defense_runtime = defense_runtime or {}
+    domain_trust = defense_runtime.get("domain_trust", {})
+    escalation_threshold = defense_runtime.get("escalation_threshold", {})
 
     for threat in threats:
         trust = domain_trust.get(threat.target, 1.0)
-        confirmed = threat.confidence >= LOW_CONFIDENCE_THRESHOLD or trust < TRUST_ESCALATION_THRESHOLD
+        threshold = escalation_threshold.get(threat.target, LOW_CONFIDENCE_THRESHOLD)
+        confirmed = threat.confidence >= threshold or trust < TRUST_ESCALATION_THRESHOLD
         actions.extend(_actions_for_threat(threat, confirmed))
 
     cost = round(sum(action.availability_cost for action in actions), 4)
@@ -39,6 +43,7 @@ def plan_defense(
             "threats": [threat.to_dict() for threat in threats],
             "availability": mission_state["availability"],
             "domain_trust": domain_trust,
+            "escalation_threshold": escalation_threshold,
         },
         after={"actions": [action.to_dict() for action in actions], "availability_cost": cost},
     )
@@ -68,6 +73,7 @@ def apply_defense_actions(
     next_state["mission"]["trust_budget"] = max(0.0, round(next_state["mission"]["trust_budget"] - total_cost * 0.8, 4))
     next_state["defense_runtime"]["active_defenses"] = active_actions
     next_state["defense_runtime"]["pending_defenses"] = []
+    sync_external_observe_from_flat(next_state["blue_observed"])
     _update_domain_trust(next_state, effective_actions, threats or [])
     _refresh_last_known_good(next_state, threats)
     return next_state

@@ -34,11 +34,9 @@ logs/
 
 # Generated reports / local exports
 outputs/
-reports/generated/
+reports/
 *.zip
 data/
-reports/run/
-reports/deg/
 tmp/world/
 
 # Local tool config / review artifacts (not shared team assets)

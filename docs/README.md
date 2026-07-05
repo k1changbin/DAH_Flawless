@@ -9,6 +9,7 @@
 | `raw_world_schema.md` | 현실 원천 신호(raw_world) schema와 generator/extractor 흐름 |
 | `schema_design.md` | runtime state의 scorer_truth(`state["world"]`)와 blue_observed schema |
 | `field_formats.md` | 각 schema 필드의 타입, 단위, 범위, 예시 |
+| `mutation_policy.md` | Red가 변조할 수 있는 external observe 필드와 profile별 max delta |
 | `situation_tags.md` | observed 기반 situation tag 정의 |
 | `attack_mapping.md` | 공격 3종과 schema/tag/방어 매핑 |
 | `encrypted_channel_attack_ai.md` | 암호화 통신 환경에서 Red AI가 공격 방법을 선택하는 설계 |
@@ -22,6 +23,7 @@ llm_alignment_guide.md
 → raw_world_schema.md
 → schema_design.md
 → field_formats.md
+→ mutation_policy.md
 → situation_tags.md
 → attack_mapping.md
 → encrypted_channel_attack_ai.md
