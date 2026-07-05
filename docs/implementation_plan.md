@@ -150,6 +150,7 @@ Redaction Boundary
 
 - Blue는 scorer_truth를 보지 않는다.
 - observed 내부 모순, history, capability, comms metadata를 본다.
+- Goal Consistency Checker는 `red_goal`을 보지 않고 ACK 혼란, channel suppression, telemetry trust erosion 같은 cyber-effect hypothesis를 추정한다.
 - defense action에는 availability cost가 있다.
 - 과방어는 `RED_ATTRITION`으로 이어질 수 있다.
 
@@ -208,6 +209,7 @@ for block in training_schedule:
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `GoalPlanner` | context + previous logs + UCB exploration으로 Red cyber-effect 목표 선택 | 구현 |
 | `GoalAwareScorer` | selected cyber-effect 목표별 success/reward/evidence 산출 | 구현 |
+| `BlueGoalConsistencyChecker` | observed-only internal/external/history 정합성으로 cyber-effect hypothesis 생성 | 구현 |
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
 | `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |

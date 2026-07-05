@@ -108,6 +108,10 @@ def _actions_for_threat(threat: Threat, confirmed: bool) -> list[DefenseAction]:
             DefenseAction("REQUEST_REVALIDATION", f"blue_observed.{threat.target}", 1, 1, 0.01),
         ]
 
+    effect_actions = _goal_effect_actions(threat)
+    if effect_actions:
+        return effect_actions
+
     if threat.target == "telemetry":
         return [
             DefenseAction("QUARANTINE_FIELD", "blue_observed.telemetry.battery_percent", 3, 1, 0.04),
@@ -125,6 +129,54 @@ def _actions_for_threat(threat: Threat, confirmed: bool) -> list[DefenseAction]:
             DefenseAction("REQUEST_REVALIDATION", "blue_observed.c2_message", 2, 1, 0.03),
         ]
     return [DefenseAction("OBSERVE_DOMAIN", threat.target, 1, 1, 0.005)]
+
+
+def _goal_effect_actions(threat: Threat) -> list[DefenseAction]:
+    tags = set(threat.tags)
+    actions: list[DefenseAction] = []
+
+    if "EFFECT_TELEMETRY_TRUST_EROSION" in tags:
+        return [
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.telemetry.battery_percent", 3, 1, 0.04),
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.telemetry.motor_status", 3, 1, 0.04),
+            DefenseAction("FALLBACK_TO_TRUSTED_STATE", "blue_observed.telemetry", 2, 1, 0.03),
+        ]
+
+    if "EFFECT_WRONG_TARGET_SELECTION" in tags:
+        return [
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.mission.area_priority", 3, 1, 0.05),
+            DefenseAction("REQUEST_REVALIDATION", "blue_observed.mission", 1, 1, 0.02),
+        ]
+
+    if "EFFECT_ACK_CAUSAL_CONFUSION" in tags:
+        return [
+            DefenseAction("HOLD_COMMAND", "blue_observed.c2_message.command", 3, 1, 0.04),
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.c2_message.ack", 2, 1, 0.01),
+            DefenseAction("REQUEST_REVALIDATION", "blue_observed.c2_message.ack", 1, 1, 0.01),
+        ]
+
+    if "EFFECT_COMMAND_STALE_ACCEPTANCE" in tags:
+        return [
+            DefenseAction("HOLD_COMMAND", "blue_observed.c2_message.command", 3, 1, 0.05),
+            DefenseAction("REQUEST_REVALIDATION", "blue_observed.c2_message", 2, 1, 0.02),
+        ]
+
+    if "EFFECT_CHANNEL_STATE_SUPPRESSION" in tags:
+        return [
+            DefenseAction("RESET_CHANNEL_TIMING", "blue_observed.comms", 2, 1, 0.015),
+            DefenseAction("REQUEST_REVALIDATION", "blue_observed.comms", 1, 1, 0.01),
+            DefenseAction("OBSERVE_DOMAIN", "command", 1, 1, 0.005),
+        ]
+
+    if "EFFECT_DETECTION_BOUNDARY_PROBE" in tags and not actions:
+        actions.extend(
+            [
+                DefenseAction("OBSERVE_DOMAIN", threat.target, 1, 1, 0.005),
+                DefenseAction("REQUEST_REVALIDATION", f"blue_observed.{threat.target}", 1, 1, 0.01),
+            ]
+        )
+
+    return _dedupe_actions(actions)
 
 
 def _update_domain_trust(state: dict, actions: list[DefenseAction], threats: list[Threat]) -> None:
@@ -155,7 +207,7 @@ def _restores_trusted_state(action: DefenseAction) -> bool:
 
 
 def _is_trusted_restore_action(action: DefenseAction) -> bool:
-    return action.action in {"FALLBACK_TO_TRUSTED_STATE", "HOLD_COMMAND", "QUARANTINE_FIELD"}
+    return action.action in {"FALLBACK_TO_TRUSTED_STATE", "HOLD_COMMAND", "QUARANTINE_FIELD", "RESET_CHANNEL_TIMING"}
 
 
 def _apply_single_action(state: dict, action: DefenseAction, history: dict) -> None:
@@ -168,6 +220,18 @@ def _apply_single_action(state: dict, action: DefenseAction, history: dict) -> N
         state["blue_observed"]["c2_message"]["command"] = source["c2_message"]["command"]
         state["blue_observed"]["c2_message"]["sequence_number"] = source["c2_message"]["sequence_number"]
         state["blue_observed"]["time"]["received_timestamp"] = source["time"]["received_timestamp"]
+    elif action.action == "RESET_CHANNEL_TIMING":
+        source = _trusted_restore_source(state, history)
+        for key in (
+            "latency_ms",
+            "packet_loss",
+            "packet_interval_jitter_ms",
+            "ack_delay_ms",
+            "heartbeat_gap_ms",
+            "message_queue_depth",
+        ):
+            if key in source.get("comms", {}):
+                state["blue_observed"]["comms"][key] = deepcopy(source["comms"][key])
     elif action.action == "REQUEST_REVALIDATION":
         state["blue_observed"]["comms"]["message_queue_depth"] += 1
 
@@ -206,3 +270,13 @@ def _set_path(data: dict, path: str, value: Any) -> None:
     for part in parts[:-1]:
         cursor = cursor[part]
     cursor[parts[-1]] = value
+
+
+def _dedupe_actions(actions: list[DefenseAction]) -> list[DefenseAction]:
+    by_key: dict[tuple[str, str], DefenseAction] = {}
+    for action in actions:
+        key = (action.action, action.target)
+        current = by_key.get(key)
+        if current is None or action.priority > current.priority:
+            by_key[key] = action
+    return sorted(by_key.values(), key=lambda action: (-action.priority, action.action, action.target))

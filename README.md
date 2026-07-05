@@ -41,7 +41,7 @@ raw_world -> Feature Extractor -> State Adapter
 | Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain trust, detection sensitivity, escalation threshold 업데이트 |
 | Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
 | LLM Adapter | `src/dah_flawless/llm/` | 역할별 외부 LLM JSON 호출과 순수 코드 fallback 공통 계층 |
-| Blue Defense | `src/dah_flawless/blue/` | 탐지, 임무위험, 단계방어 |
+| Blue Defense | `src/dah_flawless/blue/` | observed-only goal consistency, 탐지, 임무위험, 단계방어 |
 | Scorer | `src/dah_flawless/scoring/scorer.py`, `src/dah_flawless/scoring/goal_scorer.py` | 승패, goal-aware evidence, detection/recovery window |
 | Dashboard | `streamlit_app.py` | raw_world sample 입력, 로그 분석 |
 
@@ -99,7 +99,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `89 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, Goal-aware Scorer, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `93 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, Goal-aware Scorer, Blue Goal Consistency Checker, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -123,6 +123,7 @@ python -m unittest discover -s tests
 | `score.evidence.trusted_value` | scorer_truth 기준값 |
 | `score.evidence.observed_value` | Blue가 받은 값 |
 | `red_situation_tag_details` | Red가 공격 선택 전에 본 상황 태그 근거 |
+| `threat_log.after.effect_hypotheses` | Blue가 observed-only로 추정한 cyber-effect 후보 |
 
 ## 문서 읽는 순서
 

@@ -379,6 +379,7 @@ Redaction Boundary
 | Redaction Boundary | Blue 입력에서 scorer_truth 제거 | `environment/redaction.py` |
 | Situation Tagger | observed 기반 상황 태그 생성 | `blue/tagger.py`, `situation_tagger.py` |
 | Threat Detection | 태그와 불변식으로 위협 생성 | `blue/threat_detection.py`, `blue/invariants.py` |
+| Goal Consistency Checker | observed-only cyber-effect hypothesis 생성 | `blue/goal_consistency.py` |
 | Mission Monitor | 위협이 임무에 미치는 영향 계산 | `blue/mission_monitor.py` |
 | Defense Planner | 비용을 고려해 방어 action 선택 | `blue/defense_planner.py` |
 | Action Application | observed를 격리/복구/검증 요청 | `blue/defense_planner.py` |
@@ -389,6 +390,7 @@ Blue의 기본 원칙:
 
 - scorer_truth를 보지 않는다.
 - 공격명을 직접 맞히려고 하지 않는다.
+- Red가 고른 `red_goal`을 보지 않는다. 대신 internal/external observe, history, tags로 `EFFECT_*` hypothesis를 추정한다.
 - observed 내부 모순, history, capability, communication metadata로 판단한다.
 - 모든 강한 방어는 availability cost를 가진다.
 - 너무 강한 방어는 `RED_ATTRITION`으로 이어질 수 있다.
@@ -407,6 +409,19 @@ Blue의 기본 원칙:
 | observed history | 최근 30-step episode 안의 변화율, 누락, 지연, stale 여부 |
 | situation tags | `GNSS_DEGRADED`, `ACK_CHANNEL_VISIBLE`, `C2_PATTERN_EXPLOIT` 같은 의미 태그 |
 | capability/mission context | 어떤 방어 action이 가능한지, mission availability 비용은 얼마인지 |
+
+Blue Goal Consistency Checker는 다음과 같은 observed-only hypothesis를 만든다.
+
+| hypothesis tag | 근거 |
+|---|---|
+| `EFFECT_TELEMETRY_TRUST_EROSION` | internal telemetry와 external telemetry의 battery/motor 불일치 |
+| `EFFECT_WRONG_TARGET_SELECTION` | history 대비 mission priority/recommended area drift |
+| `EFFECT_COMMAND_STALE_ACCEPTANCE` | sequence/timestamp lag, replay-like tags |
+| `EFFECT_ACK_CAUSAL_CONFUSION` | ACK sequence gap, ACK delay, accepted-with-gap |
+| `EFFECT_CHANNEL_STATE_SUPPRESSION` | packet loss, heartbeat gap, latency/jitter 상승 |
+| `EFFECT_DETECTION_BOUNDARY_PROBE` | 낮은 amplitude의 단일 effect 징후와 detector feedback 확보 가능성 |
+
+Defense Planner는 이 effect tag를 이용해 같은 command domain threat도 다르게 대응한다. 예를 들어 ACK 혼란은 `HOLD_COMMAND`와 ACK field quarantine을 우선하고, channel suppression은 `RESET_CHANNEL_TIMING`과 revalidation을 우선한다. 이 단계도 실제 네트워크 차단 명령이 아니라 simulator 내부 observed 복구/검증 요청이다.
 
 Blue가 절대 보면 안 되는 정보:
 
@@ -545,6 +560,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | situation tagger | 구현 |
 | goal planner | 구현 |
 | goal-aware scorer | 구현 |
+| blue goal consistency checker | 구현 |
 | attack selector | 구현 |
 | mutation policy docs/config | 구현 |
 | mutation profile routing | 구현 |
