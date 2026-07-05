@@ -28,6 +28,7 @@ raw_world -> Feature Extractor -> State Adapter
 |---|---|---|
 | Raw World Schema | `configs/raw_world_schema.yaml`, `docs/raw_world_schema.md` | 구현 |
 | Mutation Policy | `configs/mutation_policy.yaml`, `docs/mutation_policy.md`, `src/dah_flawless/attacks/mutation_policy.py` | 핵심 필드 runtime clamp/reject 구현 |
+| Mutation Approval Reviewer | `src/dah_flawless/mutation_review/`, `configs/mutation_approval_reviewer.json` | observe 변조 approve/clamp/reject, 실패 시 오프라인 heuristic fallback |
 | World Generator | `src/dah_flawless/world/generator.py` | rule-based 구현 |
 | Feature Extractor | `src/dah_flawless/world/feature_extractor.py` | 구현 |
 | State Adapter | `src/dah_flawless/world/state_adapter.py` | raw_world를 scorer_truth/blue_observed로 변환 |
@@ -97,7 +98,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `74 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `79 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -111,6 +112,7 @@ python -m unittest discover -s tests
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `blue_policy_state` | Blue의 domain trust, detection sensitivity, escalation threshold, feedback count |
 | `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
+| `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |
 | `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약 |
 | `block`, `episode`, `global_step` | TrainingScheduler/EpisodeRunner 실행 단위 |
 | `score.evidence.trusted_value` | scorer_truth 기준값 |
@@ -142,5 +144,5 @@ python scripts/print_llm_alignment_guide.py
 - `raw_world`는 현실 원천 신호, `scorer_truth`는 채점용 기준 상태, `blue_observed`는 AI가 받은 입력이라고 설명합니다.
 - `Scorer/Admin Diff`는 Blue 화면이 아니라 증거/채점 화면이라고 명시합니다.
 - Red는 암호를 깨거나 시스템을 장악하지 않고, `blue_observed`의 값·시간·순서·메타데이터를 안전한 mutation으로 변조한다고 설명합니다.
-- Mutation Approval LLM은 reviewer-only로 설명합니다. approve/clamp/reject/explain만 하며, 공격 선택·state 직접 수정·payload 생성 권한은 없습니다.
+- Mutation Approval Reviewer는 reviewer-only로 설명합니다. approve/clamp/reject/explain만 하며, 공격 선택·state 직접 수정·payload 생성 권한은 없습니다.
 - 실제 RF/API adapter와 VAE/RL/LLM 기반 고도화는 현재 구현이 아니라 다음 단계 설계로 구분합니다.

@@ -33,6 +33,7 @@ from dah_flawless.config import (
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
+from dah_flawless.mutation_review import MutationApprovalReviewer, build_mutation_approval_reviewer
 from dah_flawless.observation import refresh_internal_observe_from_truth, sync_external_observe_from_flat
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
 from dah_flawless.scoring.metrics import summarize_logs
@@ -55,6 +56,7 @@ def run_simulation(
     red_policy_state: dict | None = None,
     blue_policy_state: dict | None = None,
     policy_update_reviewer: PolicyUpdateReviewer | None = None,
+    mutation_approval_reviewer: MutationApprovalReviewer | None = None,
 ) -> tuple[list[dict], dict]:
     state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(seed, scenario)
     if blue_policy_state is not None:
@@ -62,6 +64,7 @@ def run_simulation(
     scenario_label = state.get("scenario", scenario)
     history = make_history(state)
     reviewer = policy_update_reviewer or build_policy_update_reviewer()
+    mutation_reviewer = mutation_approval_reviewer or build_mutation_approval_reviewer()
     red_agent = RedAgent(
         seed,
         stealth_mode=stealth_mode,
@@ -83,7 +86,13 @@ def run_simulation(
             round_number, redacted_for_red, pre_attack_tags, pre_attack_tag_details
         )
 
-        attacked_state, mutation_log = apply_attack(state, attack, stealth=stealth, tactic=red_tactic)
+        attacked_state, mutation_log = apply_attack(
+            state,
+            attack,
+            stealth=stealth,
+            tactic=red_tactic,
+            mutation_approval_reviewer=mutation_reviewer,
+        )
         pre_defense_state = deepcopy(attacked_state)
 
         redacted_for_blue = redact_state(attacked_state)

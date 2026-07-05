@@ -131,7 +131,7 @@ Observer
 
 - `CausalWorldSupervisor`: 30-step episode 안에서 world 값의 비현실적 점프와 모순을 검수한다.
 - `EpisodeWorldGenerator`: 단일 sample이 아니라 원인-결과가 이어지는 30개 timestep을 생성한다.
-- LLM은 raw payload 생성기가 아니라 causal explanation/reviewer로 제한한다. `Mutation Approval LLM`은 reviewer-only로 두며 공격 선택, 변조값 생성, state 직접 수정 권한을 주지 않는다.
+- LLM은 raw payload 생성기가 아니라 causal explanation/reviewer로 제한한다. `Mutation Approval Reviewer`는 reviewer-only로 두며 공격 선택, 변조값 생성, state 직접 수정 권한을 주지 않는다.
 
 ## 8. Blue 방어 계획
 
@@ -158,6 +158,8 @@ Redaction Boundary
 Policy Update Reviewer는 Red/Blue feedback learner가 만든 정책 변동 후보를 심사한다. 외부 LLM reviewer는 `configs/policy_update_reviewer.json`으로 켤 수 있지만 기본값은 off이며, 외부 연결 실패나 invalid JSON이 발생하면 오프라인 heuristic reviewer가 같은 인터페이스로 즉시 대체된다.
 
 공통 LLM Adapter는 `src/dah_flawless/llm/`에 있다. 각 역할 모듈은 이 계층을 통해 외부 OpenAI-compatible JSON 응답을 요청하고, 실패하면 역할별 순수 코드 fallback으로 계속 진행한다.
+
+Mutation Approval Reviewer는 `src/dah_flawless/mutation_review/`에 있다. Attack Selector와 deterministic Mutation Policy가 만든 후보 observe mutation만 심사하며, 외부 LLM이 있어도 approve/clamp/reject 범위를 넘지 못한다.
 
 ## 9. Scorer 계획
 
@@ -205,7 +207,7 @@ for block in training_schedule:
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
 | `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |
-| `MutationApprovalLLM` | proposed mutation의 이유, 허용 범위, 안전 경계 검토. reviewer-only | 설계 |
+| `MutationApprovalReviewer` | proposed observe mutation의 허용 범위 심사, 외부 LLM 실패 시 fallback | 구현 |
 | `MutationPolicy` | external_observe 허용 필드와 profile별 max delta 기준 | 핵심 필드 runtime enforcement 구현 |
 | `MutationProfile routing` | stealth/aggressive/loud_demo profile별 params 선택 | 구현 |
 | `MutationEngine handlers` | 공격별 handler가 MutationOutcome(before/after/delta)을 반환 | 구현 |
@@ -219,7 +221,7 @@ for block in training_schedule:
 | VAE/CVAE world generator | 미구현 |
 | 30-step EpisodeRunner | 구현 |
 | Alternating TrainingScheduler | 구현 |
-| MutationApprovalLLM | reviewer-only 설계 |
+| MutationApprovalReviewer | reviewer-only 구현 |
 | MutationPolicy field-level enforcement | 핵심 필드 구현, YAML config 자동 로딩 구현 |
 | 실제 RF/API adapter | 미구현 |
 | 실제 공격 실행 | 범위 밖 |

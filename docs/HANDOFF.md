@@ -22,7 +22,7 @@ raw_world
 - 보고서용 기준에서 1 episode는 30 consecutive timesteps다.
 - 현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다.
 - World Generator는 rule-based transition을 기본으로 하고, LLM은 causal supervisor/reviewer로만 사용한다.
-- Mutation Approval LLM은 reviewer-only다. approve/clamp/reject/explain만 가능하고, 공격 선택·변조값 생성·state 수정·payload 생성은 하지 않는다.
+- Mutation Approval Reviewer는 reviewer-only다. approve/clamp/reject/explain만 가능하고, 공격 선택·변조값 생성·state 수정·payload 생성은 하지 않는다.
 - Red 공격 범위는 simulated observe mutation과 channel-level delay/drop/jitter/reorder/loss abstraction까지 포함한다.
 - Blue observe는 `internal_observe`와 `external_observe`로 나뉜다. Red는 `external_observe`만 직접 mutation할 수 있다.
 - 현재 MVP의 `blue_observed.telemetry` 같은 flat key는 `external_observe` 호환 view다.
@@ -32,6 +32,7 @@ raw_world
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Feedback Learner는 scorer feedback으로 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`를 업데이트한다.
 - Policy Update Reviewer는 Red/Blue policy delta를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
+- Mutation Approval Reviewer는 Red observe mutation 후보를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - `src/dah_flawless/llm/`의 LLM Adapter가 역할별 외부 JSON 호출, schema 검증, 순수 코드 fallback을 공통 처리한다.
 - 학습 cadence는 Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes를 기본값으로 두며, `TrainingScheduler`로 구현되어 있다.
 
@@ -60,6 +61,7 @@ raw_world
 | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed mutation engine |
 | `src/dah_flawless/blue/feedback_learner.py` | Blue scorer feedback learner |
 | `src/dah_flawless/llm/` | shared role-scoped external LLM adapter and offline fallback boundary |
+| `src/dah_flawless/mutation_review/` | mutation approval reviewer and external-LLM fallback |
 | `src/dah_flawless/policy_review/` | bounded policy update reviewer and external-LLM fallback |
 | `src/dah_flawless/environment/episode_runner.py` | 30-step episode runner |
 | `src/dah_flawless/environment/training_scheduler.py` | alternating Blue/Red update scheduler |

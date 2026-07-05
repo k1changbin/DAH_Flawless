@@ -35,7 +35,7 @@ class MutationPolicyTests(unittest.TestCase):
         self.assertIn("internal_observe", doc)
         self.assertIn("external_observe", doc)
         self.assertIn("loud_demo", doc)
-        self.assertIn("Mutation Approval LLM", doc)
+        self.assertIn("Mutation Approval Reviewer", doc)
         self.assertIn("reviewer-only", doc)
         self.assertIn("approve", doc)
         self.assertIn("clamp", doc)

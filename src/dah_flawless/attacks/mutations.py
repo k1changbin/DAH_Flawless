@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from dah_flawless.attacks.mutation_policy import MutationPolicyEnforcer
 from dah_flawless.config import DEFAULT_MUTATION_PROFILE, MUTATION_PROFILES
+from dah_flawless.mutation_review import MutationApprovalReviewer, build_mutation_approval_reviewer
 from dah_flawless.observation import sync_external_observe_from_flat
 from dah_flawless.schemas import Attack
 
@@ -78,6 +79,7 @@ def apply_attack(
     attack: Attack,
     stealth: bool = False,
     tactic: dict | None = None,
+    mutation_approval_reviewer: MutationApprovalReviewer | None = None,
 ) -> tuple[dict, dict]:
     """Apply an attack to blue_observed only.
 
@@ -94,6 +96,7 @@ def apply_attack(
 
     next_state = deepcopy(state)
     obs = next_state["blue_observed"]
+    before_observe = deepcopy(obs)
     profile = resolve_mutation_profile(stealth, tactic)
     tactic_payload = tactic or {}
     handler = MUTATION_HANDLERS.get(attack.name)
@@ -101,8 +104,20 @@ def apply_attack(
         raise ValueError(f"mutation not implemented for {attack.name}")
 
     outcome = handler(obs, tactic_payload, profile)
+    reviewer = mutation_approval_reviewer or build_mutation_approval_reviewer()
+    reviewed_observe, approval_log = reviewer.review_mutation(
+        attack_name=attack.name,
+        profile=profile,
+        tactic=tactic_payload,
+        before_observe=before_observe,
+        proposed_observe=obs,
+        outcome=outcome,
+    )
+    next_state["blue_observed"] = reviewed_observe
+    obs = next_state["blue_observed"]
     sync_external_observe_from_flat(obs)
-    return next_state, _mutation_log(attack.name, stealth, profile, tactic_payload, outcome)
+    reviewed_outcome = _reviewed_outcome(attack.name, outcome, obs)
+    return next_state, _mutation_log(attack.name, stealth, profile, tactic_payload, reviewed_outcome, approval_log)
 
 
 def _mutation_log(
@@ -111,6 +126,7 @@ def _mutation_log(
     profile: str,
     tactic: dict,
     outcome: MutationOutcome,
+    approval_log: dict,
 ) -> dict:
     return {
         "agent": "RedAgent",
@@ -123,6 +139,7 @@ def _mutation_log(
         "requested_delta": outcome.requested_delta,
         "applied_delta": outcome.applied_delta,
         "policy_decisions": outcome.policy_decisions,
+        "mutation_approval_review": approval_log,
         "before": outcome.before,
         "after": outcome.after,
     }
@@ -205,6 +222,58 @@ def _time_desync_snapshot(obs: dict) -> dict:
         "ack_delay_ms": obs["comms"].get("ack_delay_ms"),
         "heartbeat_gap_ms": obs["comms"].get("heartbeat_gap_ms"),
     }
+
+
+def _reviewed_outcome(attack_name: str, outcome: MutationOutcome, obs: dict) -> MutationOutcome:
+    after = _snapshot_for_attack(attack_name, obs)
+    applied_delta = _delta_for_attack(attack_name, outcome.before, after)
+    return replace(outcome, after=after, applied_delta=applied_delta)
+
+
+def _snapshot_for_attack(attack_name: str, obs: dict) -> Any:
+    if attack_name == "TELEMETRY_FDI":
+        return {
+            "battery_percent": obs["telemetry"]["battery_percent"],
+            "motor_status": obs["telemetry"]["motor_status"],
+        }
+    if attack_name == "PRIORITY_POISONING":
+        return deepcopy(obs["mission"]["area_priority"])
+    if attack_name == "TIME_DESYNC_REPLAY":
+        return _time_desync_snapshot(obs)
+    return None
+
+
+def _delta_for_attack(attack_name: str, before: Any, after: Any) -> Any:
+    if attack_name == "PRIORITY_POISONING":
+        return _priority_delta(before, after)
+    if attack_name == "TELEMETRY_FDI":
+        return after["battery_percent"] - before["battery_percent"]
+    if attack_name == "TIME_DESYNC_REPLAY":
+        return _generic_delta(before, after)
+    return None
+
+
+def _generic_delta(before: Any, after: Any) -> Any:
+    if isinstance(before, dict) and isinstance(after, dict):
+        delta: dict[str, Any] = {}
+        for key in sorted(set(before).union(after)):
+            if key not in before:
+                delta[key] = after[key]
+            elif key not in after:
+                delta[key] = None
+            else:
+                value = _generic_delta(before[key], after[key])
+                if value is not None:
+                    delta[key] = value
+        return delta
+    if isinstance(before, (int, float)) and isinstance(after, (int, float)) and not isinstance(before, bool):
+        value = after - before
+        if isinstance(before, int) and isinstance(after, int):
+            return value
+        return round(value, 4)
+    if before != after:
+        return after
+    return None
 
 
 def _apply_time_desync_strategy(
