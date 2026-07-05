@@ -13,6 +13,7 @@ from dah_flawless.config import (
     TRUST_RESTORE_BONUS,
     TRUSTED_RESTORE_DEGRADED_COST_MULTIPLIER,
 )
+from dah_flawless.blue.goal_consistency import effect_ids_from_tags
 from dah_flawless.observation import sync_external_observe_from_flat
 from dah_flawless.schemas import DefenseAction, MissionRisk, Threat, decision
 
@@ -27,10 +28,11 @@ def plan_defense(
     defense_runtime = defense_runtime or {}
     domain_trust = defense_runtime.get("domain_trust", {})
     escalation_threshold = defense_runtime.get("escalation_threshold", {})
+    effect_threshold = defense_runtime.get("effect_threshold", {})
 
     for threat in threats:
         trust = domain_trust.get(threat.target, 1.0)
-        threshold = escalation_threshold.get(threat.target, LOW_CONFIDENCE_THRESHOLD)
+        threshold = _threshold_for_threat(threat, escalation_threshold, effect_threshold)
         confirmed = threat.confidence >= threshold or trust < TRUST_ESCALATION_THRESHOLD
         actions.extend(_actions_for_threat(threat, confirmed))
 
@@ -44,10 +46,23 @@ def plan_defense(
             "availability": mission_state["availability"],
             "domain_trust": domain_trust,
             "escalation_threshold": escalation_threshold,
+            "effect_threshold": effect_threshold,
         },
         after={"actions": [action.to_dict() for action in actions], "availability_cost": cost},
     )
     return actions, log
+
+
+def _threshold_for_threat(threat: Threat, escalation_threshold: dict, effect_threshold: dict) -> float:
+    domain_threshold = escalation_threshold.get(threat.target, LOW_CONFIDENCE_THRESHOLD)
+    matching_effect_thresholds = [
+        effect_threshold[effect_id]
+        for effect_id in effect_ids_from_tags(threat.tags)
+        if effect_id in effect_threshold
+    ]
+    if not matching_effect_thresholds:
+        return domain_threshold
+    return min(domain_threshold, min(matching_effect_thresholds))
 
 
 def apply_defense_actions(

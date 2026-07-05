@@ -224,7 +224,7 @@ Fixed evaluation block: 3 episodes
 
 `10 episodes`는 기본값이며, 실험 시간이나 데이터 양에 따라 바꿀 수 있다. 중요한 원칙은 한쪽을 업데이트하는 동안 상대 정책을 고정해 비정상적인 동시 적응을 줄이는 것이다.
 
-현재 구현에서는 `TrainingScheduler`가 이 cadence를 실행한다. Red policy state는 공격 weight, adaptive stealth set, telemetry probe delta를 저장한다. Blue policy state는 rule-based baseline에서 쓰는 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`를 저장한다. Blue update block에서는 Red policy를 고정하고 Blue policy만 업데이트하며, Red update block에서는 Blue policy를 고정하고 Red weight/probe만 업데이트한다. Fixed evaluation block에서는 둘 다 고정한다.
+현재 구현에서는 `TrainingScheduler`가 이 cadence를 실행한다. Red policy state는 공격 weight, adaptive stealth set, telemetry probe delta를 저장한다. Blue policy state는 rule-based baseline에서 쓰는 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`를 저장한다. Blue update block에서는 Red policy를 고정하고 Blue policy만 업데이트하며, Red update block에서는 Blue policy를 고정하고 Red weight/probe만 업데이트한다. Fixed evaluation block에서는 둘 다 고정한다.
 
 현재 Blue는 rule-based baseline에 scorer feedback 기반 policy update를 붙인 형태다. 완전한 RL은 아니며, 보고서에서는 adaptive defense policy로 설명한다.
 
@@ -383,7 +383,7 @@ Redaction Boundary
 | Mission Monitor | 위협이 임무에 미치는 영향 계산 | `blue/mission_monitor.py` |
 | Defense Planner | 비용을 고려해 방어 action 선택 | `blue/defense_planner.py` |
 | Action Application | observed를 격리/복구/검증 요청 | `blue/defense_planner.py` |
-| Feedback Learner | scorer 결과로 domain trust/sensitivity/threshold 업데이트 | `blue/feedback_learner.py` |
+| Feedback Learner | scorer 결과로 domain/effect sensitivity/threshold 업데이트 | `blue/feedback_learner.py` |
 | Incident Report | 보고서/운영자용 요약 생성 | `blue/incident_report.py` |
 
 Blue의 기본 원칙:
@@ -399,7 +399,7 @@ Blue의 기본 원칙:
 
 현재 보고서용 설계에서 Blue는 먼저 rule-based baseline으로 둔다. 이유는 방어 AI까지 처음부터 학습형으로 만들면 Red와 Blue가 동시에 변해 scorer feedback의 원인을 해석하기 어려워지기 때문이다.
 
-현재 구현된 Blue Feedback Learner는 완전한 강화학습이 아니라 scorer feedback 기반 adaptive policy update다. `RED_BREACH`처럼 공격을 놓치면 target domain의 `detection_sensitivity`를 올리고 `escalation_threshold`를 낮춘다. false positive나 큰 availability cost가 발생하면 sensitivity를 낮추고 threshold를 올려 과방어를 줄인다. 이 업데이트는 `TrainingScheduler`의 Blue update block에서만 적용된다.
+현재 구현된 Blue Feedback Learner는 완전한 강화학습이 아니라 scorer feedback 기반 adaptive policy update다. `RED_BREACH`처럼 공격을 놓치면 target domain의 `detection_sensitivity`를 올리고 `escalation_threshold`를 낮춘다. 또한 scorer의 `goal_id/goal_success`와 Blue가 낸 `EFFECT_*` hypothesis를 비교해 effect별 `effect_sensitivity`와 `effect_threshold`도 조정한다. 예를 들어 `ACK_CAUSAL_CONFUSION` 목표가 성공했는데 Blue threat에 `EFFECT_ACK_CAUSAL_CONFUSION`이 없으면 해당 effect sensitivity를 올리고 threshold를 낮춘다. false positive나 큰 availability cost가 발생하면 domain/effect sensitivity를 낮추고 threshold를 올려 과방어를 줄인다. 이 업데이트는 `TrainingScheduler`의 Blue update block에서만 적용된다.
 
 초기 Blue rule은 다음 정보를 사용한다.
 
@@ -541,7 +541,7 @@ new_weight = old_weight + learning_rate * normalized_reward
 | `global_step` | 전체 episode 실행을 통틀어 증가하는 step 번호 |
 | `block` | TrainingScheduler 실행 시 `BLUE_UPDATE`, `RED_UPDATE`, `FIXED_EVAL` 중 현재 block |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
-| `blue_policy_state` | Blue domain trust, detection sensitivity, escalation threshold, feedback counts |
+| `blue_policy_state` | Blue domain/effect sensitivity, threshold, trust, feedback counts |
 | `policy_update_review` | policy delta 후보, selected scale, rejection count, fallback reason |
 | `feedback` | scorer 결과를 policy update에 넘기는 요약 |
 | `red_input_redacted` | Red 입력에서 `world` 제거 여부 |

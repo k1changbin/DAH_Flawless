@@ -56,6 +56,95 @@ class BlueFeedbackLearnerTests(unittest.TestCase):
         self.assertEqual(adjusted[0].confidence, 0.84)
         self.assertEqual(log["event"], "threat_confidence_adjusted")
 
+    def test_detection_policy_applies_effect_sensitivity(self):
+        policy = default_blue_policy_state()
+        policy["effect_sensitivity"]["EFFECT_ACK_CAUSAL_CONFUSION"] = 1.2
+        threats = [
+            Threat(
+                "command",
+                0.50,
+                ("EFFECT_ACK_CAUSAL_CONFUSION", "ACK_CAUSALITY_BREAK"),
+                ("ack gap",),
+            )
+        ]
+
+        adjusted, log = apply_detection_policy(threats, policy)
+
+        self.assertEqual(adjusted[0].confidence, 0.60)
+        self.assertIn("effect_sensitivity", log["after"])
+
+    def test_missed_goal_effect_raises_effect_sensitivity(self):
+        policy = default_blue_policy_state()
+        score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.90,
+            target_domain="command",
+            goal_id="ACK_CAUSAL_CONFUSION",
+            goal_success=True,
+            goal_reward=0.72,
+            evidence={"goal_score": {"goal_id": "ACK_CAUSAL_CONFUSION"}},
+        )
+        threats = [Threat("command", 0.80, ("REPLAY_SUSPECTED",), ("generic command anomaly",))]
+
+        updated, log = update_blue_policy(policy, score, threats, [])
+
+        self.assertGreater(
+            updated["effect_sensitivity"]["EFFECT_ACK_CAUSAL_CONFUSION"],
+            policy["effect_sensitivity"]["EFFECT_ACK_CAUSAL_CONFUSION"],
+        )
+        self.assertLess(
+            updated["effect_threshold"]["EFFECT_ACK_CAUSAL_CONFUSION"],
+            policy["effect_threshold"]["EFFECT_ACK_CAUSAL_CONFUSION"],
+        )
+        self.assertEqual(
+            updated["effect_feedback_counts"]["EFFECT_ACK_CAUSAL_CONFUSION"]["missed_effect"],
+            1,
+        )
+        self.assertEqual(log["after"]["effect_update_reason"], "missed_goal_effect_raise_sensitivity")
+
+    def test_false_positive_goal_effect_reduces_effect_sensitivity(self):
+        policy = default_blue_policy_state()
+        score = Score(
+            winner="DRAW",
+            attack_success=False,
+            detection_success=False,
+            false_positive=True,
+            recovery_success=False,
+            availability=0.99,
+            target_domain="command",
+            goal_id="CHANNEL_STATE_SUPPRESSION",
+            goal_success=False,
+            goal_reward=0.10,
+            evidence={"goal_score": {"goal_id": "CHANNEL_STATE_SUPPRESSION"}},
+        )
+        threats = [
+            Threat(
+                "command",
+                0.75,
+                ("EFFECT_CHANNEL_STATE_SUPPRESSION", "CHANNEL_FRESHNESS_LOSS"),
+                ("packet loss looked high",),
+            )
+        ]
+
+        updated, _ = update_blue_policy(policy, score, threats, [])
+
+        self.assertLess(
+            updated["effect_sensitivity"]["EFFECT_CHANNEL_STATE_SUPPRESSION"],
+            policy["effect_sensitivity"]["EFFECT_CHANNEL_STATE_SUPPRESSION"],
+        )
+        self.assertGreater(
+            updated["effect_threshold"]["EFFECT_CHANNEL_STATE_SUPPRESSION"],
+            policy["effect_threshold"]["EFFECT_CHANNEL_STATE_SUPPRESSION"],
+        )
+        self.assertEqual(
+            updated["effect_feedback_counts"]["EFFECT_CHANNEL_STATE_SUPPRESSION"]["false_positive_effect"],
+            1,
+        )
+
     def test_costly_defense_adds_over_defense_count(self):
         policy = default_blue_policy_state()
         score = Score(

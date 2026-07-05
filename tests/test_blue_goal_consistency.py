@@ -1,10 +1,12 @@
 import unittest
 
 from dah_flawless.blue.defense_planner import apply_defense_actions, plan_defense
+from dah_flawless.blue.feedback_learner import default_blue_policy_state
 from dah_flawless.blue.threat_detection import detect_threats
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
+from dah_flawless.schemas import Threat
 
 
 class BlueGoalConsistencyTests(unittest.TestCase):
@@ -55,6 +57,25 @@ class BlueGoalConsistencyTests(unittest.TestCase):
         self.assertIn("RESET_CHANNEL_TIMING", [action.action for action in actions])
         self.assertEqual(defended["blue_observed"]["comms"]["heartbeat_gap_ms"], 0)
         self.assertEqual(defended["blue_observed"]["comms"]["packet_interval_jitter_ms"], 18)
+
+    def test_effect_threshold_can_confirm_specific_defense(self):
+        state = create_baseline_state(seed=1)
+        policy = default_blue_policy_state()
+        policy["effect_threshold"]["EFFECT_ACK_CAUSAL_CONFUSION"] = 0.60
+        state["defense_runtime"].update(policy)
+        threats = [
+            Threat(
+                "command",
+                0.65,
+                ("EFFECT_ACK_CAUSAL_CONFUSION", "ACK_CAUSALITY_BREAK"),
+                ("ack gap",),
+            )
+        ]
+
+        actions, _ = plan_defense(threats, [], state["mission"], state["defense_runtime"])
+
+        self.assertIn("HOLD_COMMAND", [action.action for action in actions])
+        self.assertIn("blue_observed.c2_message.ack", [action.target for action in actions])
 
     def test_simulation_logs_goal_effect_hypotheses(self):
         logs, _ = run_simulation(seed=42, rounds=1)

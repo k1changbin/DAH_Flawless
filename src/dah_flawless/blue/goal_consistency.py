@@ -10,6 +10,28 @@ from dah_flawless.config import CAPABILITY_FACTORS
 from dah_flawless.schemas import Threat
 
 
+EFFECT_TAGS = (
+    "EFFECT_TELEMETRY_TRUST_EROSION",
+    "EFFECT_WRONG_TARGET_SELECTION",
+    "EFFECT_COMMAND_STALE_ACCEPTANCE",
+    "EFFECT_ACK_CAUSAL_CONFUSION",
+    "EFFECT_CHANNEL_STATE_SUPPRESSION",
+    "EFFECT_DETECTION_BOUNDARY_PROBE",
+)
+
+
+def effect_ids_from_tags(tags: tuple[str, ...] | list[str]) -> list[str]:
+    tag_set = set(tags)
+    return sorted(tag for tag in EFFECT_TAGS if tag in tag_set)
+
+
+def effect_id_from_goal_id(goal_id: str | None) -> str | None:
+    if not goal_id:
+        return None
+    effect_id = f"EFFECT_{goal_id}"
+    return effect_id if effect_id in EFFECT_TAGS else None
+
+
 def infer_goal_effect_threats(
     redacted_state: dict,
     history: dict,

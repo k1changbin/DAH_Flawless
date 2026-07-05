@@ -178,7 +178,10 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "domain_trust": deepcopy(blue_policy["domain_trust"]),
             "detection_sensitivity": deepcopy(blue_policy["detection_sensitivity"]),
             "escalation_threshold": deepcopy(blue_policy["escalation_threshold"]),
+            "effect_sensitivity": deepcopy(blue_policy["effect_sensitivity"]),
+            "effect_threshold": deepcopy(blue_policy["effect_threshold"]),
             "feedback_counts": deepcopy(blue_policy["feedback_counts"]),
+            "effect_feedback_counts": deepcopy(blue_policy["effect_feedback_counts"]),
         },
         "last_known_good": deepcopy(blue_observed),
     }

@@ -38,7 +38,7 @@ raw_world -> Feature Extractor -> State Adapter
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed 변조 |
 | EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
 | TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
-| Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain trust, detection sensitivity, escalation threshold 업데이트 |
+| Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain/effect trust, sensitivity, threshold 업데이트 |
 | Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
 | LLM Adapter | `src/dah_flawless/llm/` | 역할별 외부 LLM JSON 호출과 순수 코드 fallback 공통 계층 |
 | Blue Defense | `src/dah_flawless/blue/` | observed-only goal consistency, 탐지, 임무위험, 단계방어 |
@@ -99,7 +99,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `93 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, Goal-aware Scorer, Blue Goal Consistency Checker, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `97 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, Goal-aware Scorer, Blue Goal Consistency Checker, Effect-aware Blue Feedback Learner, Attack Selector, EpisodeRunner, TrainingScheduler, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -112,7 +112,7 @@ python -m unittest discover -s tests
 | `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `red_goal` | Red Goal Planner가 선택한 cyber-effect 목표 |
-| `blue_policy_state` | Blue의 domain trust, detection sensitivity, escalation threshold, feedback count |
+| `blue_policy_state` | Blue의 domain/effect sensitivity, threshold, trust, feedback count |
 | `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
 | `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |
 | `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약 |

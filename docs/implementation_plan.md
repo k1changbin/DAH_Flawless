@@ -154,7 +154,7 @@ Redaction Boundary
 - defense action에는 availability cost가 있다.
 - 과방어는 `RED_ATTRITION`으로 이어질 수 있다.
 
-현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, false positive나 과방어 비용이 크면 sensitivity를 낮추고 threshold를 올린다.
+현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, 놓친 cyber-effect는 해당 effect sensitivity를 올리고 effect threshold를 낮춘다. false positive나 과방어 비용이 크면 domain/effect sensitivity를 낮추고 threshold를 올린다.
 
 Policy Update Reviewer는 Red/Blue feedback learner가 만든 정책 변동 후보를 심사한다. 외부 LLM reviewer는 `configs/policy_update_reviewer.json`으로 켤 수 있지만 기본값은 off이며, 외부 연결 실패나 invalid JSON이 발생하면 오프라인 heuristic reviewer가 같은 인터페이스로 즉시 대체된다.
 
@@ -210,7 +210,7 @@ for block in training_schedule:
 | `GoalPlanner` | context + previous logs + UCB exploration으로 Red cyber-effect 목표 선택 | 구현 |
 | `GoalAwareScorer` | selected cyber-effect 목표별 success/reward/evidence 산출 | 구현 |
 | `BlueGoalConsistencyChecker` | observed-only internal/external/history 정합성으로 cyber-effect hypothesis 생성 | 구현 |
-| `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
+| `BlueFeedbackLearner` | scorer 결과로 Blue domain/effect sensitivity/threshold 업데이트 | 구현 |
 | `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |
 | `MutationApprovalReviewer` | proposed observe mutation의 허용 범위 심사, 외부 LLM 실패 시 fallback | 구현 |

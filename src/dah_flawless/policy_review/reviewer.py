@@ -348,6 +348,27 @@ def _blue_direction_score(before: dict, value: dict, context: dict) -> float:
         score += 0.1
     else:
         score += 0.1
+    effect_id = context.get("goal_effect_id")
+    if effect_id:
+        effect_sensitivity_delta = _nested_delta(before, value, "effect_sensitivity", effect_id)
+        effect_threshold_delta = _nested_delta(before, value, "effect_threshold", effect_id)
+        goal_success = bool(context.get("goal_success", False))
+        effect_seen = bool(context.get("goal_effect_seen", False))
+        if goal_success and not effect_seen:
+            if effect_sensitivity_delta >= 0:
+                score += 0.15
+            if effect_threshold_delta <= 0:
+                score += 0.15
+        elif goal_success and effect_seen:
+            if effect_sensitivity_delta >= -0.01:
+                score += 0.12
+            if abs(effect_threshold_delta) <= 0.03:
+                score += 0.08
+        elif (false_positive or over_defense) and effect_seen:
+            if effect_sensitivity_delta <= 0:
+                score += 0.15
+            if effect_threshold_delta >= 0:
+                score += 0.15
     return min(1.0, score)
 
 

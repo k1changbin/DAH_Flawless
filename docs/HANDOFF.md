@@ -31,7 +31,7 @@ raw_world
 - Blue는 raw_world와 scorer_truth/state["world"]를 볼 수 없다.
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Goal Consistency Checker는 scorer의 `red_goal`을 보지 않고 observed/internal/history/tags만으로 cyber-effect hypothesis를 만든다.
-- Blue Feedback Learner는 scorer feedback으로 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`를 업데이트한다.
+- Blue Feedback Learner는 scorer feedback으로 domain policy와 effect policy(`effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`)를 업데이트한다.
 - Goal Planner는 이전 로그와 현재 observed context를 함께 보고 Red의 cyber-effect 목표를 고른다.
 - Goal-aware Scorer는 기존 `attack_success`와 별도로 `goal_success`, `goal_reward`, `score.evidence.goal_score`를 기록한다.
 - Policy Update Reviewer는 Red/Blue policy delta를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
