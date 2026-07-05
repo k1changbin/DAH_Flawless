@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dah_flawless.attacks.effect_contracts import score_contract_alignment
 from dah_flawless.schemas import Attack, DefenseAction, Threat
 
 
@@ -41,9 +42,19 @@ def score_red_goal(
     goal_score.setdefault("target_domain", attack.target_domain)
     goal_score.setdefault("goal_success", bool(goal_score.get("effect_score", 0.0) >= 0.55))
     goal_score.setdefault("goal_reward", _reward_from_effect(goal_score["effect_score"], detection_success, recovery_success))
+    contract_alignment = score_contract_alignment(attack.name, red_goal or {"goal_id": goal_id})
+    goal_score["contract_alignment"] = contract_alignment
+    if not contract_alignment["supported_goal"]:
+        goal_score["goal_success"] = False
+        goal_score["effect_score"] = round(min(0.10, float(goal_score.get("effect_score", 0.0))), 4)
+        goal_score["goal_reward"] = round(min(0.06, float(goal_score.get("goal_reward", 0.0))), 4)
+        evidence = dict(goal_score.get("evidence", {}))
+        evidence["contract_violation"] = contract_alignment["reason"]
+        evidence["expected_mutation_paths"] = contract_alignment["expected_mutation_paths"]
+        goal_score["evidence"] = evidence
     goal_score["goal_reward"] = round(min(1.0, max(0.0, float(goal_score["goal_reward"]))), 4)
     goal_score["goal_success"] = bool(goal_score["goal_success"])
-    goal_score["algorithm"] = "goal_effect_rule_score_v0"
+    goal_score["algorithm"] = "goal_effect_contract_rule_score_v1"
     return goal_score
 
 

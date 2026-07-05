@@ -29,6 +29,7 @@ from dah_flawless.config import (
     DEFAULT_STEALTH_MODE,
     ROUND_SECONDS,
     TRUST_BUDGET_RECOVERY_PER_ROUND,
+    SCRIPTED_ATTACKS,
 )
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
 from dah_flawless.environment.redaction import redact_state
@@ -36,6 +37,7 @@ from dah_flawless.environment.state_factory import create_baseline_state, make_h
 from dah_flawless.mutation_review import MutationApprovalReviewer, build_mutation_approval_reviewer
 from dah_flawless.observation import refresh_internal_observe_from_truth, sync_external_observe_from_flat
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
+from dah_flawless.scoring.causal_consistency import assess_causal_consistency
 from dah_flawless.scoring.metrics import summarize_logs
 from dah_flawless.scoring.scorer import score_round
 from dah_flawless.schemas import decision
@@ -58,6 +60,7 @@ def run_simulation(
     previous_logs: list[dict] | None = None,
     policy_update_reviewer: PolicyUpdateReviewer | None = None,
     mutation_approval_reviewer: MutationApprovalReviewer | None = None,
+    scripted_attacks: tuple[str, ...] = SCRIPTED_ATTACKS,
 ) -> tuple[list[dict], dict]:
     state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(seed, scenario)
     if blue_policy_state is not None:
@@ -68,6 +71,7 @@ def run_simulation(
     mutation_reviewer = mutation_approval_reviewer or build_mutation_approval_reviewer()
     red_agent = RedAgent(
         seed,
+        scripted_attacks=scripted_attacks,
         stealth_mode=stealth_mode,
         mutation_profile=mutation_profile,
         policy_state=red_policy_state,
@@ -123,6 +127,16 @@ def run_simulation(
             recovery_history=recovery_history,
             red_goal=red_goal,
         )
+        causal_consistency, causal_log = assess_causal_consistency(
+            attack=attack,
+            red_goal=red_goal,
+            red_tactic=red_tactic,
+            mutation_log=mutation_log,
+            pre_attack_tags=pre_attack_tags,
+            situation_tags=situation_tags,
+            threats=threats,
+            score=score,
+        )
         report, report_log = write_incident_report(threats, risks, actions, score)
         if blue_update_enabled:
             blue_policy_after, blue_update_log = update_blue_policy(
@@ -176,6 +190,7 @@ def run_simulation(
             "mission_risks": [risk.to_dict() for risk in risks],
             "defense_actions": defended_state["defense_runtime"]["active_defenses"],
             "score": score.to_dict(),
+            "causal_consistency": causal_consistency,
             "incident_report": report,
             "red_policy_state": red_agent.export_policy_state(),
             "blue_policy_state": export_blue_policy_state(defended_state),
@@ -188,6 +203,8 @@ def run_simulation(
                 "attack_success": score.attack_success,
                 "goal_success": score.goal_success,
                 "goal_reward": score.goal_reward,
+                "causal_consistency_score": causal_consistency["consistency_score"],
+                "causal_consistency_status": causal_consistency["status"],
                 "detection_success": score.detection_success,
                 "recovery_success": score.recovery_success,
             },
@@ -198,6 +215,7 @@ def run_simulation(
                 blue_detection_policy_log,
                 risk_log,
                 defense_log,
+                causal_log,
                 report_log,
                 blue_update_log,
                 red_update_log,

@@ -32,7 +32,7 @@ raw_world
 | 학습 cadence | Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes |
 | 현재 우선순위 | 코드 완성보다 보고서용 구조와 용어 명료화 우선 |
 
-현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다. `TrainingScheduler`는 Blue-only/Red-only/fixed-eval update block을 관리한다.
+현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다. `TrainingScheduler`는 Blue-only/Red-only/fixed-eval update block을 관리한다. `HoldoutEvaluator`는 최종 Red/Blue policy를 frozen 상태로 복사해 별도 seed/scenario에서 일반화 평가를 수행한다.
 
 ## 3. 저장소 구조 원칙
 
@@ -57,6 +57,7 @@ docs/
   mutation_policy.md
   situation_tags.md
   attack_mapping.md
+  attack_effect_contracts.md
 scripts/
   print_llm_alignment_guide.py
   run_world_generator.py
@@ -69,12 +70,14 @@ src/dah_flawless/
   situation_tagger.py
   attacks/
     catalog.py
+    effect_contracts.py
     selector.py
     red_agent.py
     mutations.py
   blue/
   environment/
   scoring/
+    causal_consistency.py
 tests/
 ```
 
@@ -111,8 +114,8 @@ Observer
 |---|---|
 | Observer | redacted state와 tag 입력 |
 | Situation Tagger | `src/dah_flawless/situation_tagger.py` |
-| Goal Planner | `src/dah_flawless/attacks/goal_planner.py`. 이전 로그와 현재 context 기반 cyber-effect 목표 선택 |
-| Attack Selector | `src/dah_flawless/attacks/selector.py` |
+| Goal Planner | `src/dah_flawless/attacks/goal_planner.py`. 이전 로그와 현재 context 기반 cyber-effect 목표 선택. 최근 목표/domain 반복 감점과 저사용 목표 보너스가 포함된다 |
+| Attack Selector | `src/dah_flawless/attacks/selector.py`. `effect_contracts.py`의 Attack-Effect Contract로 목표-공격 정합성을 점수화하고 repeat guard로 contract-compatible tactic 다양성 유지 |
 | Mutation Policy | `configs/mutation_policy.yaml`, `docs/mutation_policy.md` |
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` |
 | Stealth Controller | `red_agent.py`의 stealth/tactic |
@@ -154,7 +157,7 @@ Redaction Boundary
 - defense action에는 availability cost가 있다.
 - 과방어는 `RED_ATTRITION`으로 이어질 수 있다.
 
-현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, 놓친 cyber-effect는 해당 effect sensitivity를 올리고 effect threshold를 낮춘다. false positive나 과방어 비용이 크면 domain/effect sensitivity를 낮추고 threshold를 올린다.
+현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, 놓친 cyber-effect는 해당 effect sensitivity를 올리고 effect threshold를 낮춘다. false positive나 과방어 비용이 크면 domain/effect sensitivity를 낮추고 threshold를 올린다. policy saturation guard는 domain trust가 0으로 붕괴하지 않도록 floor를 적용하고 로그에 guard event를 남긴다.
 
 Policy Update Reviewer는 Red/Blue feedback learner가 만든 정책 변동 후보를 심사한다. 외부 LLM reviewer는 `configs/policy_update_reviewer.json`으로 켤 수 있지만 기본값은 off이며, 외부 연결 실패나 invalid JSON이 발생하면 오프라인 heuristic reviewer가 같은 인터페이스로 즉시 대체된다.
 
@@ -167,6 +170,10 @@ Mutation Approval Reviewer는 `src/dah_flawless/mutation_review/`에 있다. Att
 Scorer만 scorer_truth와 blue_observed를 동시에 본다.
 
 기본 `attack_success`는 target domain에서 scorer_truth와 observed가 의미 있게 벌어졌는지를 본다. `goal_success`는 Red Goal Planner가 선택한 cyber-effect 목표가 달성됐는지를 따로 본다. 예를 들어 같은 command domain이라도 stale command, ACK 인과 혼란, channel state suppression은 서로 다른 evidence로 채점한다.
+
+`AttackEffectContract`는 공격 후보와 기대 effect를 명시적으로 연결한다. Attack Selector는 contract alignment를 후보 점수에 곱하고, Goal-aware Scorer는 unsupported attack-goal pair를 low-reward 실패로 clamp한다. 따라서 `PRIORITY_POISONING -> COMMAND_STALE_ACCEPTANCE` 같은 의미상 어색한 조합은 태그 점수가 높더라도 학습 보상을 받기 어렵다.
+
+`CausalConsistencyMonitor`는 각 라운드에서 attack contract, mutation path, situation/effect tag, scorer evidence가 이어지는지 검사한다. summary에는 `avg_causal_consistency`, `causal_warning_count`, `causal_failure_count`, `attack_entropy`, `tactic_entropy`가 기록된다.
 
 | 판정 | 의미 |
 |---|---|
@@ -207,7 +214,10 @@ for block in training_schedule:
 |---|---|---|
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
-| `GoalPlanner` | context + previous logs + UCB exploration으로 Red cyber-effect 목표 선택 | 구현 |
+| `HoldoutEvaluator` | frozen Red/Blue policy를 별도 seed/scenario grid에서 평가 | 구현 |
+| `GoalPlanner` | context + previous logs + UCB exploration + diversity guard로 Red cyber-effect 목표 선택 | 구현 |
+| `AttackEffectContract` | 공격 후보와 지원 goal/effect/evidence를 묶어 selector/scorer 정합성 기준 제공 | 구현 |
+| `CausalConsistencyMonitor` | attack -> mutation -> tag/effect -> scorer evidence 체인 검사 | 구현 |
 | `GoalAwareScorer` | selected cyber-effect 목표별 success/reward/evidence 산출 | 구현 |
 | `BlueGoalConsistencyChecker` | observed-only internal/external/history 정합성으로 cyber-effect hypothesis 생성 | 구현 |
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain/effect sensitivity/threshold 업데이트 | 구현 |
@@ -227,6 +237,7 @@ for block in training_schedule:
 | VAE/CVAE world generator | 미구현 |
 | 30-step EpisodeRunner | 구현 |
 | Alternating TrainingScheduler | 구현 |
+| Holdout seed/scenario evaluator | 구현 |
 | MutationApprovalReviewer | reviewer-only 구현 |
 | MutationPolicy field-level enforcement | 핵심 필드 구현, YAML config 자동 로딩 구현 |
 | 실제 RF/API adapter | 미구현 |

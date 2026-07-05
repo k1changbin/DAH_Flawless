@@ -21,6 +21,13 @@ from dah_flawless.config import (
     STEALTH_MODES,
 )
 from dah_flawless.environment.episode_runner import run_episodes
+from dah_flawless.environment.hash_log import reset_log_outputs
+from dah_flawless.environment.holdout_evaluator import (
+    DEFAULT_HOLDOUT_SCENARIOS,
+    DEFAULT_HOLDOUT_SEEDS,
+    DEFAULT_HOLDOUT_STEPS,
+    run_holdout_evaluation,
+)
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.training_scheduler import run_training_schedule
 from dah_flawless.world.state_adapter import build_state_from_raw_world
@@ -44,6 +51,22 @@ def parse_args() -> argparse.Namespace:
         help=f"Run episode mode with this many independent episodes. Default step count is {DEFAULT_STEPS_PER_EPISODE}.",
     )
     parser.add_argument("--steps-per-episode", type=int, default=DEFAULT_STEPS_PER_EPISODE)
+    parser.add_argument(
+        "--holdout-eval",
+        action="store_true",
+        help="After the main run, evaluate frozen final Red/Blue policies on separate seed/scenario cases.",
+    )
+    parser.add_argument(
+        "--holdout-seeds",
+        default=",".join(str(seed) for seed in DEFAULT_HOLDOUT_SEEDS),
+        help="Comma-separated seeds for frozen-policy holdout evaluation.",
+    )
+    parser.add_argument(
+        "--holdout-scenarios",
+        default=",".join(DEFAULT_HOLDOUT_SCENARIOS),
+        help="Comma-separated scenarios for frozen-policy holdout evaluation.",
+    )
+    parser.add_argument("--holdout-steps", type=int, default=DEFAULT_HOLDOUT_STEPS)
     parser.add_argument("--scenario", choices=SCENARIOS, default=DEFAULT_SCENARIO)
     parser.add_argument(
         "--red-stealth",
@@ -60,6 +83,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out", type=Path, default=Path("data/logs/round_logs.jsonl"))
     parser.add_argument("--summary", type=Path, default=Path("data/logs/summary.json"))
+    parser.add_argument("--holdout-out", type=Path, default=Path("data/logs/holdout_logs.jsonl"))
+    parser.add_argument("--holdout-summary", type=Path, default=Path("data/logs/holdout_summary.json"))
+    parser.add_argument(
+        "--reset-logs",
+        action="store_true",
+        help="Delete the selected --out and --summary files before running.",
+    )
     parser.add_argument(
         "--raw-world-sample",
         type=Path,
@@ -70,6 +100,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.reset_logs:
+        reset_targets = [args.out, args.summary]
+        if args.holdout_eval:
+            reset_targets.extend([args.holdout_out, args.holdout_summary])
+        removed = reset_log_outputs(reset_targets)
+        removed_text = ", ".join(str(path) for path in removed) if removed else "none"
+        print(f"reset log outputs: {removed_text}")
+
     initial_state = None
     if args.raw_world_sample:
         sample = _read_raw_world_sample(args.raw_world_sample)
@@ -114,8 +152,48 @@ def main() -> None:
             initial_state=initial_state,
         )
         print(f"wrote {len(logs)} rounds to {args.out}")
+    if args.holdout_eval:
+        holdout_seeds = _parse_int_list(args.holdout_seeds, name="--holdout-seeds")
+        holdout_scenarios = _parse_str_list(args.holdout_scenarios, name="--holdout-scenarios")
+        holdout_logs, holdout_summary = run_holdout_evaluation(
+            red_policy_state=summary.get("final_red_policy_state") or summary.get("red_policy_state"),
+            blue_policy_state=summary.get("final_blue_policy_state") or summary.get("blue_policy_state"),
+            seeds=holdout_seeds,
+            scenarios=holdout_scenarios,
+            steps_per_case=args.holdout_steps,
+            log_path=args.holdout_out,
+            summary_path=args.holdout_summary,
+            stealth_mode=args.red_stealth,
+            mutation_profile=args.mutation_profile,
+        )
+        print(
+            "wrote frozen-policy holdout with "
+            f"{holdout_summary['cases']} cases / {len(holdout_logs)} steps to {args.holdout_out}"
+        )
+        print(f"wrote holdout summary to {args.holdout_summary}")
+        print(holdout_summary)
     print(f"wrote summary to {args.summary}")
     print(summary)
+
+
+def _parse_int_list(text: str, *, name: str) -> list[int]:
+    values = [item.strip() for item in text.split(",") if item.strip()]
+    if not values:
+        raise ValueError(f"{name} must contain at least one integer")
+    try:
+        return [int(value) for value in values]
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a comma-separated integer list") from exc
+
+
+def _parse_str_list(text: str, *, name: str) -> list[str]:
+    values = [item.strip() for item in text.split(",") if item.strip()]
+    if not values:
+        raise ValueError(f"{name} must contain at least one value")
+    unknown = sorted(set(values).difference(SCENARIOS))
+    if unknown:
+        raise ValueError(f"{name} contains unknown scenario(s): {', '.join(unknown)}")
+    return values
 
 
 def _read_raw_world_sample(path: Path) -> dict:

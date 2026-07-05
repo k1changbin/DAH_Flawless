@@ -54,6 +54,10 @@ DEFAULT_STEALTH_MODE = "off"
 MUTATION_PROFILES = ("stealth", "aggressive", "loud_demo")
 DEFAULT_MUTATION_PROFILE = "aggressive"
 
+# Contract-compatible tactic exploration keeps Red from collapsing to a single
+# tactic while preserving the attack-effect contract boundary.
+DEFAULT_TACTIC_EXPLORATION_RATE = 0.18
+
 # Capability degradation lowers Blue detection confidence (paralysis model).
 # A degraded cross-check / time-validation means Blue is less sure about the
 # same invariant violation, so the same attack is harder to detect.

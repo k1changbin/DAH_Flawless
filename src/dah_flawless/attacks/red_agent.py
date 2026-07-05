@@ -21,7 +21,12 @@ from dah_flawless.attacks.goal_planner import (
     update_goal_stats,
 )
 from dah_flawless.attacks.selector import build_tactic, score_attack_candidates
-from dah_flawless.config import DEFAULT_MUTATION_PROFILE, DEFAULT_STEALTH_MODE, SCRIPTED_ATTACKS
+from dah_flawless.config import (
+    DEFAULT_MUTATION_PROFILE,
+    DEFAULT_STEALTH_MODE,
+    DEFAULT_TACTIC_EXPLORATION_RATE,
+    SCRIPTED_ATTACKS,
+)
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
 from dah_flawless.schemas import Attack, SituationTag, decision
 
@@ -44,6 +49,7 @@ class RedAgent:
         self._goal_stats = default_goal_stats()
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
+        self._tactic_exploration_rate = DEFAULT_TACTIC_EXPLORATION_RATE
         self._policy_update_reviewer = policy_update_reviewer or build_policy_update_reviewer()
         self.load_policy_state(policy_state)
 
@@ -66,7 +72,14 @@ class RedAgent:
             attack = get_attack(self._scripted_attacks[round_number - 1])
             goal_plan = select_goal_for_attack(attack.name, goal_candidates)
             stealth = self._use_stealth(attack.name)
-            tactic = self._build_tactic(attack.name, stealth, tag_details, goal_plan)
+            tactic = self._build_tactic(
+                attack.name,
+                stealth,
+                tag_details,
+                goal_plan,
+                exploration_rate=0.0,
+                recent_tactics=[],
+            )
             log = decision(
                 "RedAgent",
                 "attack_selected",
@@ -103,7 +116,14 @@ class RedAgent:
                 break
 
         stealth = self._use_stealth(chosen.name)
-        tactic = self._build_tactic(chosen.name, stealth, tag_details, goal_plan)
+        tactic = self._build_tactic(
+            chosen.name,
+            stealth,
+            tag_details,
+            goal_plan,
+            exploration_rate=self._tactic_exploration_rate,
+            recent_tactics=_recent_tactics(previous_logs or [], chosen.name),
+        )
         log = decision(
             "RedAgent",
             "attack_selected",
@@ -133,6 +153,8 @@ class RedAgent:
         stealth: bool,
         tag_details: list[SituationTag] | None,
         goal_plan: dict | None = None,
+        exploration_rate: float = 0.0,
+        recent_tactics: list[str] | None = None,
     ) -> dict:
         return build_tactic(
             attack_name,
@@ -141,6 +163,9 @@ class RedAgent:
             self._telemetry_probe_delta,
             mutation_profile=self._mutation_profile,
             goal_plan=goal_plan,
+            rng=self._rng,
+            exploration_rate=exploration_rate,
+            recent_tactics=recent_tactics,
         )
 
     def update_weight(
@@ -206,6 +231,8 @@ class RedAgent:
         self._stealth_for = set(policy_state.get("stealth_for", []))
         if "telemetry_probe_delta" in policy_state:
             self._telemetry_probe_delta = int(policy_state["telemetry_probe_delta"])
+        if "tactic_exploration_rate" in policy_state:
+            self._tactic_exploration_rate = float(policy_state["tactic_exploration_rate"])
         if "goal_stats" in policy_state:
             self._goal_stats = normalize_goal_stats(policy_state["goal_stats"])
 
@@ -215,6 +242,7 @@ class RedAgent:
             "goal_stats": deepcopy_sorted_goal_stats(self._goal_stats),
             "stealth_for": sorted(self._stealth_for),
             "telemetry_probe_delta": self._telemetry_probe_delta,
+            "tactic_exploration_rate": self._tactic_exploration_rate,
             "stealth_mode": self._stealth_mode,
             "mutation_profile": self._mutation_profile,
         }
@@ -229,3 +257,16 @@ def _tag_context(tags: list[str], tag_details: list[SituationTag] | None) -> dic
 
 def deepcopy_sorted_goal_stats(goal_stats: dict) -> dict:
     return {goal_id: dict(goal_stats[goal_id]) for goal_id in sorted(goal_stats)}
+
+
+def _recent_tactics(previous_logs: list[dict], attack_name: str, window: int = 5) -> list[str]:
+    tactics: list[str] = []
+    for entry in reversed(previous_logs):
+        if entry.get("attack", {}).get("name") != attack_name:
+            continue
+        strategy = (entry.get("red_tactic") or {}).get("strategy")
+        if strategy:
+            tactics.append(strategy)
+        if len(tactics) >= window:
+            break
+    return list(reversed(tactics))

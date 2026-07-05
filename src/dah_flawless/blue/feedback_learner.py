@@ -10,6 +10,7 @@ from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update
 from dah_flawless.schemas import DefenseAction, Score, Threat, decision
 
 DOMAINS = ("telemetry", "mission", "command")
+MIN_DOMAIN_TRUST = 0.12
 MIN_SENSITIVITY = 0.80
 MAX_SENSITIVITY = 1.30
 MIN_ESCALATION_THRESHOLD = 0.58
@@ -226,7 +227,9 @@ def update_blue_policy(
         if seen_effect_ids:
             effect_reason = f"{effect_reason or 'effect_detected'}_with_cost_control"
 
+    pre_review_clamp = deepcopy(policy)
     _clamp_policy(policy)
+    saturation_guard = _saturation_guard_report(pre_review_clamp, policy)
     policy_update_reviewer = reviewer or build_policy_update_reviewer()
     reviewed_tunables, review_log = policy_update_reviewer.review_update(
         agent="BlueFeedbackLearner",
@@ -250,7 +253,9 @@ def update_blue_policy(
         },
     )
     _apply_tunables(policy, reviewed_tunables)
+    pre_final_clamp = deepcopy(policy)
     _clamp_policy(policy)
+    saturation_guard["events"].extend(_saturation_guard_report(pre_final_clamp, policy)["events"])
     return policy, decision(
         "BlueFeedbackLearner",
         "policy_updated",
@@ -260,6 +265,7 @@ def update_blue_policy(
             "policy_state": deepcopy(policy),
             "action_cost": action_cost,
             "effect_update_reason": effect_reason,
+            "saturation_guard": saturation_guard,
             "score": score.to_dict(),
             "policy_update_review": review_log,
         },
@@ -324,7 +330,7 @@ def _apply_tunables(policy: dict, tunables: dict) -> None:
 
 def _clamp_policy(policy: dict) -> None:
     for domain in DOMAINS:
-        policy["domain_trust"][domain] = round(min(1.0, max(0.0, policy["domain_trust"][domain])), 4)
+        policy["domain_trust"][domain] = round(min(1.0, max(MIN_DOMAIN_TRUST, policy["domain_trust"][domain])), 4)
         policy["detection_sensitivity"][domain] = round(
             min(MAX_SENSITIVITY, max(MIN_SENSITIVITY, policy["detection_sensitivity"][domain])), 4
         )
@@ -338,6 +344,26 @@ def _clamp_policy(policy: dict) -> None:
         policy["effect_threshold"][effect_id] = round(
             min(MAX_EFFECT_THRESHOLD, max(MIN_EFFECT_THRESHOLD, policy["effect_threshold"][effect_id])), 4
         )
+
+
+def _saturation_guard_report(before: dict, after: dict) -> dict:
+    events = []
+    for domain in DOMAINS:
+        before_value = float(before["domain_trust"][domain])
+        after_value = float(after["domain_trust"][domain])
+        if before_value < MIN_DOMAIN_TRUST and after_value == MIN_DOMAIN_TRUST:
+            events.append(
+                {
+                    "field": f"domain_trust.{domain}",
+                    "before": round(before_value, 4),
+                    "after": after_value,
+                    "reason": "domain_trust_floor",
+                }
+            )
+    return {
+        "min_domain_trust": MIN_DOMAIN_TRUST,
+        "events": events,
+    }
 
 
 def _score_effect_id(score: Score) -> str | None:

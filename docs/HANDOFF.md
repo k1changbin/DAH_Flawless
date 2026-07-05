@@ -32,12 +32,17 @@ raw_world
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Goal Consistency Checker는 scorer의 `red_goal`을 보지 않고 observed/internal/history/tags만으로 cyber-effect hypothesis를 만든다.
 - Blue Feedback Learner는 scorer feedback으로 domain policy와 effect policy(`effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`)를 업데이트한다.
-- Goal Planner는 이전 로그와 현재 observed context를 함께 보고 Red의 cyber-effect 목표를 고른다.
+- Goal Planner는 이전 로그와 현재 observed context를 함께 보고 Red의 cyber-effect 목표를 고른다. 최근 목표/domain 반복에는 diversity penalty를 주고, 덜 시도한 목표에는 작은 보너스를 준다.
+- Attack-Effect Contract는 공격 후보와 지원 goal/effect/evidence를 묶는다. Attack Selector는 contract alignment를 점수에 반영하고, Goal-aware Scorer는 unsupported attack-goal pair를 low-reward 실패로 clamp한다.
+- Attack Selector는 contract-compatible repeat guard와 tactic exploration rate로 같은 tactic 반복을 줄인다.
 - Goal-aware Scorer는 기존 `attack_success`와 별도로 `goal_success`, `goal_reward`, `score.evidence.goal_score`를 기록한다.
+- Causal Consistency Monitor는 attack -> mutation -> tag/effect -> scorer evidence 체인을 검사하고, summary에 causal/entropy metrics를 남긴다.
+- Blue policy saturation guard는 domain trust가 0으로 붕괴하지 않도록 floor를 적용한다.
 - Policy Update Reviewer는 Red/Blue policy delta를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - Mutation Approval Reviewer는 Red observe mutation 후보를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - `src/dah_flawless/llm/`의 LLM Adapter가 역할별 외부 JSON 호출, schema 검증, 순수 코드 fallback을 공통 처리한다.
 - 학습 cadence는 Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes를 기본값으로 두며, `TrainingScheduler`로 구현되어 있다.
+- Holdout 평가는 학습이 끝난 Red/Blue policy를 frozen 상태로 복사한 뒤 별도 seed/scenario grid에서 돌린다. 이때 MVP coverage용 scripted attack은 꺼서 정책 자체의 일반화 성능을 본다.
 
 ## 구조 원칙
 
@@ -56,11 +61,13 @@ raw_world
 | `docs/llm_alignment_guide.md` | 용어/방향성/AI 구조 기준 문서 |
 | `docs/raw_world_schema.md` | raw_world 설명 |
 | `docs/mutation_policy.md` | Mutation Policy 설명과 구현 단계 |
+| `docs/attack_effect_contracts.md` | 실제 문헌/문서 기반 Attack-Effect Contract와 비판적 평가 |
 | `src/dah_flawless/world/generator.py` | rule-based raw_world generator |
 | `src/dah_flawless/world/feature_extractor.py` | raw_world feature extractor |
 | `src/dah_flawless/world/state_adapter.py` | raw_world -> MVP runtime state 변환 |
 | `src/dah_flawless/situation_tagger.py` | 공용 Situation Tagger |
-| `src/dah_flawless/attacks/goal_planner.py` | previous-log feedback 기반 Red cyber-effect goal planner |
+| `src/dah_flawless/attacks/goal_planner.py` | previous-log feedback 기반 Red cyber-effect goal planner와 diversity guard |
+| `src/dah_flawless/attacks/effect_contracts.py` | attack-goal-effect 정합성 contract |
 | `src/dah_flawless/attacks/selector.py` | Attack/Tactic scoring |
 | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed mutation engine |
 | `src/dah_flawless/blue/goal_consistency.py` | Blue observed-only cyber-effect hypothesis checker |
@@ -70,9 +77,11 @@ raw_world
 | `src/dah_flawless/policy_review/` | bounded policy update reviewer and external-LLM fallback |
 | `src/dah_flawless/environment/episode_runner.py` | 30-step episode runner |
 | `src/dah_flawless/environment/training_scheduler.py` | alternating Blue/Red update scheduler |
+| `src/dah_flawless/environment/holdout_evaluator.py` | frozen-policy seed/scenario holdout evaluator |
 | `src/dah_flawless/blue/` | Blue detection/mission/defense/report agents |
 | `src/dah_flawless/scoring/scorer.py` | scorer 판정 |
 | `src/dah_flawless/scoring/goal_scorer.py` | Red cyber-effect 목표별 goal_success/goal_reward 판정 |
+| `src/dah_flawless/scoring/causal_consistency.py` | causal chain consistency monitor |
 
 ## 실행
 

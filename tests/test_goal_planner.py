@@ -66,6 +66,41 @@ class GoalPlannerTests(unittest.TestCase):
         wrong_target = next(candidate for candidate in candidates if candidate["goal_id"] == "WRONG_TARGET_SELECTION")
         self.assertGreaterEqual(wrong_target["score_breakdown"]["history_reward"], 0.8)
 
+    def test_goal_planner_penalizes_recent_goal_collapse(self):
+        previous_logs = [
+            {
+                "round": round_number,
+                "red_goal": {"goal_id": "COMMAND_STALE_ACCEPTANCE"},
+                "score": {
+                    "winner": "RED_BREACH",
+                    "attack_success": True,
+                    "detection_success": False,
+                    "recovery_success": False,
+                    "target_domain": "command",
+                    "evidence": {"defense_actions": []},
+                },
+                "defense_actions": [],
+            }
+            for round_number in range(1, 7)
+        ]
+        state = create_baseline_state(seed=1)
+        details = derive_tag_details(redact_state(state), make_history(state))
+
+        candidates = score_goal_candidates(
+            tag_details=details,
+            observed_state=redact_state(state),
+            previous_logs=previous_logs,
+            goal_stats=default_goal_stats(),
+            round_number=7,
+        )
+
+        repeated = next(candidate for candidate in candidates if candidate["goal_id"] == "COMMAND_STALE_ACCEPTANCE")
+        underused = next(candidate for candidate in candidates if candidate["goal_id"] == "TELEMETRY_TRUST_EROSION")
+        self.assertEqual(repeated["score_breakdown"]["recent_goal_count"], 6)
+        self.assertEqual(repeated["score_breakdown"]["consecutive_goal_count"], 6)
+        self.assertGreater(repeated["score_breakdown"]["repeat_penalty"], 0.0)
+        self.assertGreater(underused["score_breakdown"]["underused_bonus"], 0.0)
+
     def test_select_goal_for_scripted_attack_keeps_attack_compatible(self):
         state = create_baseline_state(seed=1)
         details = derive_tag_details(redact_state(state), make_history(state))

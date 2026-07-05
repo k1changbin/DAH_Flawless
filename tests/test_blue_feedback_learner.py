@@ -1,6 +1,7 @@
 import unittest
 
 from dah_flawless.blue.feedback_learner import (
+    MIN_DOMAIN_TRUST,
     apply_detection_policy,
     default_blue_policy_state,
     update_blue_policy,
@@ -165,6 +166,31 @@ class BlueFeedbackLearnerTests(unittest.TestCase):
 
         self.assertEqual(updated["feedback_counts"]["telemetry"]["over_defense"], 1)
         self.assertGreater(updated["escalation_threshold"]["telemetry"], policy["escalation_threshold"]["telemetry"])
+
+    def test_saturation_guard_keeps_domain_trust_above_floor(self):
+        policy = default_blue_policy_state()
+        policy["domain_trust"]["command"] = MIN_DOMAIN_TRUST + 0.01
+        score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.80,
+            target_domain="command",
+        )
+
+        updated, log = update_blue_policy(
+            policy,
+            score,
+            [Threat("command", 0.9, ("REPLAY_SUSPECTED",), ("sequence lag",))],
+            [],
+        )
+
+        self.assertEqual(updated["domain_trust"]["command"], MIN_DOMAIN_TRUST)
+        guard = log["after"]["saturation_guard"]
+        self.assertTrue(guard["events"])
+        self.assertEqual(guard["events"][0]["reason"], "domain_trust_floor")
 
 
 if __name__ == "__main__":

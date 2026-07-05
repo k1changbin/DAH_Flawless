@@ -15,6 +15,14 @@ from typing import Any
 
 from dah_flawless.schemas import Score, SituationTag
 
+GOAL_DIVERSITY_WINDOW = 6
+GOAL_REPEAT_PENALTY_PER_USE = 0.10
+GOAL_CONSECUTIVE_PENALTY_PER_USE = 0.12
+GOAL_DOMAIN_REPEAT_PENALTY_PER_USE = 0.035
+GOAL_UNDERUSED_BONUS_PER_COUNT = 0.04
+MAX_GOAL_DIVERSITY_PENALTY = 0.45
+MAX_GOAL_UNDERUSED_BONUS = 0.16
+
 
 @dataclass(frozen=True)
 class GoalSpec:
@@ -167,7 +175,10 @@ def score_goal_candidates(
     tag_confidence = {detail.tag: detail.confidence for detail in tag_details or []}
     stats = _merge_log_stats(normalize_goal_stats(goal_stats), previous_logs or [])
     total_count = max(1, sum(int(item["count"]) for item in stats.values()))
-    recent_counts = _recent_goal_counts(previous_logs or [], window=4)
+    recent_logs = previous_logs or []
+    recent_counts = _recent_goal_counts(recent_logs, window=GOAL_DIVERSITY_WINDOW)
+    recent_domain_counts = _recent_goal_domain_counts(recent_logs, window=GOAL_DIVERSITY_WINDOW)
+    mean_count = total_count / max(1, len(GOAL_CATALOG))
 
     candidates = []
     for goal in GOAL_CATALOG:
@@ -178,8 +189,9 @@ def score_goal_candidates(
         world_fit = _world_fit(goal, observed_state, previous_logs or [])
         ucb_bonus = sqrt(2.0 * log(total_count + 1) / (count + 1))
         ucb_bonus = min(1.0, round(ucb_bonus, 4))
-        recent_detection = _recent_detection_rate(previous_logs or [], goal.target_domain)
-        repeat_penalty = min(0.35, recent_counts.get(goal.goal_id, 0) * 0.11)
+        recent_detection = _recent_detection_rate(recent_logs, goal.target_domain)
+        repeat_penalty = _goal_diversity_penalty(goal, recent_logs, recent_counts, recent_domain_counts)
+        underused_bonus = _goal_underused_bonus(count, mean_count)
         detection_risk = min(1.0, round(goal.detectability_risk * 0.7 + recent_detection * 0.3, 4))
 
         score = (
@@ -189,9 +201,10 @@ def score_goal_candidates(
             + 0.16 * goal.mission_impact
             + 0.14 * ucb_bonus
             + 0.08 * goal.learning_value
+            + underused_bonus
             - 0.14 * detection_risk
             - 0.10 * goal.policy_risk
-            - 0.08 * repeat_penalty
+            - repeat_penalty
         )
         score = round(max(0.0, score), 4)
         candidates.append(
@@ -214,9 +227,13 @@ def score_goal_candidates(
                     "detection_risk": detection_risk,
                     "policy_risk": goal.policy_risk,
                     "repeat_penalty": round(repeat_penalty, 4),
+                    "underused_bonus": round(underused_bonus, 4),
+                    "recent_goal_count": recent_counts.get(goal.goal_id, 0),
+                    "recent_domain_count": recent_domain_counts.get(goal.target_domain, 0),
+                    "consecutive_goal_count": _consecutive_goal_count(recent_logs, goal.goal_id),
                     "count": count,
                 },
-                "algorithm": "contextual_ucb_multi_criteria",
+                "algorithm": "contextual_ucb_multi_criteria_goal_diversity_guard",
             }
         )
 
@@ -416,6 +433,50 @@ def _recent_goal_counts(previous_logs: list[dict], window: int) -> dict[str, int
         if goal_id:
             counts[goal_id] = counts.get(goal_id, 0) + 1
     return counts
+
+
+def _recent_goal_domain_counts(previous_logs: list[dict], window: int) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    goal_by_id = {goal.goal_id: goal for goal in GOAL_CATALOG}
+    for entry in previous_logs[-window:]:
+        goal_id = _goal_id_from_log(entry)
+        if not goal_id or goal_id not in goal_by_id:
+            continue
+        domain = goal_by_id[goal_id].target_domain
+        counts[domain] = counts.get(domain, 0) + 1
+    return counts
+
+
+def _consecutive_goal_count(previous_logs: list[dict], goal_id: str) -> int:
+    count = 0
+    for entry in reversed(previous_logs):
+        if _goal_id_from_log(entry) != goal_id:
+            break
+        count += 1
+    return count
+
+
+def _goal_diversity_penalty(
+    goal: GoalSpec,
+    previous_logs: list[dict],
+    recent_counts: dict[str, int],
+    recent_domain_counts: dict[str, int],
+) -> float:
+    recent_goal_count = recent_counts.get(goal.goal_id, 0)
+    recent_domain_count = recent_domain_counts.get(goal.target_domain, 0)
+    consecutive_count = _consecutive_goal_count(previous_logs, goal.goal_id)
+    penalty = (
+        GOAL_REPEAT_PENALTY_PER_USE * recent_goal_count
+        + GOAL_CONSECUTIVE_PENALTY_PER_USE * consecutive_count
+        + GOAL_DOMAIN_REPEAT_PENALTY_PER_USE * recent_domain_count
+    )
+    return round(min(MAX_GOAL_DIVERSITY_PENALTY, penalty), 4)
+
+
+def _goal_underused_bonus(count: int, mean_count: float) -> float:
+    if count >= mean_count:
+        return 0.0
+    return round(min(MAX_GOAL_UNDERUSED_BONUS, (mean_count - count) * GOAL_UNDERUSED_BONUS_PER_COUNT), 4)
 
 
 def _recent_detection_rate(previous_logs: list[dict], target_domain: str) -> float:

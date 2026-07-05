@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dah_flawless.config import DEFAULT_MUTATION_PROFILE, MUTATION_PROFILES
+from dah_flawless.attacks.effect_contracts import contract_supports_tactic, score_contract_alignment
 from dah_flawless.schemas import Attack, SituationTag
 
 
@@ -174,11 +175,17 @@ def score_attack_candidates(
             goal_bonus += 0.35
         if goal_target_domain in {attack.target_domain, "multi_domain"}:
             goal_bonus += 0.12
-        score = round(
-            learned_weights.get(attack.name, attack.weight)
-            * (1.0 + min(2.5, 0.7 * matched_strength) + goal_bonus),
-            3,
-        )
+        contract_alignment = score_contract_alignment(attack.name, goal_plan, tag_details)
+        contract_multiplier = round(0.20 + 0.80 * float(contract_alignment["score"]), 4)
+        if (goal_plan or {}).get("goal_id") and not contract_alignment["supported_goal"]:
+            score = 0.0
+        else:
+            score = round(
+                learned_weights.get(attack.name, attack.weight)
+                * (1.0 + min(2.5, 0.7 * matched_strength) + goal_bonus)
+                * contract_multiplier,
+                3,
+            )
         candidates.append(
             {
                 "attack": attack.name,
@@ -187,6 +194,8 @@ def score_attack_candidates(
                 "matched_tags": matched_tags,
                 "matched_strength": matched_strength,
                 "goal_bonus": round(goal_bonus, 3),
+                "contract_multiplier": contract_multiplier,
+                "contract_alignment": contract_alignment,
                 "goal_id": (goal_plan or {}).get("goal_id"),
             }
         )
@@ -201,6 +210,9 @@ def build_tactic(
     telemetry_probe_delta: int,
     mutation_profile: str = DEFAULT_MUTATION_PROFILE,
     goal_plan: dict[str, Any] | None = None,
+    rng: Any | None = None,
+    exploration_rate: float = 0.0,
+    recent_tactics: list[str] | None = None,
 ) -> dict[str, Any]:
     profile = _profile_for_tactic(stealth, mutation_profile)
     if stealth and attack_name == "TELEMETRY_FDI":
@@ -213,7 +225,12 @@ def build_tactic(
             "goal_plan": goal_plan,
         }
 
-    tactic_scores = score_tactic_candidates(attack_name, tag_details, goal_plan=goal_plan)
+    tactic_scores = score_tactic_candidates(
+        attack_name,
+        tag_details,
+        goal_plan=goal_plan,
+        recent_tactics=recent_tactics,
+    )
     if not tactic_scores:
         return {
             "stealth": stealth,
@@ -223,14 +240,15 @@ def build_tactic(
             "goal_plan": goal_plan,
         }
 
-    chosen = tactic_scores[0]
+    chosen, selector_reason = _select_tactic_candidate(tactic_scores, rng=rng, exploration_rate=exploration_rate)
     return {
         "stealth": stealth,
         "mutation_profile": profile,
         "strategy": chosen["strategy"],
         "goal": chosen["goal"],
         "goal_plan": goal_plan,
-        "selector": "tag_scored_tactic_policy",
+        "selector": selector_reason,
+        "exploration_rate": round(exploration_rate, 4),
         "score": chosen["score"],
         "score_breakdown": chosen["score_breakdown"],
         "matched_tags": chosen["matched_tags"],
@@ -244,10 +262,12 @@ def score_tactic_candidates(
     attack_name: str,
     tag_details: list[SituationTag] | None,
     goal_plan: dict[str, Any] | None = None,
+    recent_tactics: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     tag_confidence = _tag_confidence(tag_details)
     preferred_tactics = set((goal_plan or {}).get("preferred_tactics", []))
     preferred_goal_tags = set((goal_plan or {}).get("matched_tags", []))
+    recent_counts = {strategy: (recent_tactics or []).count(strategy) for strategy in set(recent_tactics or [])}
     candidates = []
 
     for tactic in TACTIC_CATALOG:
@@ -267,7 +287,19 @@ def score_tactic_candidates(
             goal_bonus += 0.8
         if preferred_goal_tags.intersection(matched_tags):
             goal_bonus += 0.25
-        score = round(tactic.base_score + tactic.impact + tag_bonus + goal_bonus - tactic.detectability - tactic.cost, 3)
+        contract_tactic_bonus = 0.20 if contract_supports_tactic(attack_name, tactic.strategy) else -0.60
+        repeat_penalty = min(1.20, 0.45 * recent_counts.get(tactic.strategy, 0))
+        score = round(
+            tactic.base_score
+            + tactic.impact
+            + tag_bonus
+            + goal_bonus
+            + contract_tactic_bonus
+            - repeat_penalty
+            - tactic.detectability
+            - tactic.cost,
+            3,
+        )
         candidates.append(
             {
                 "attack": tactic.attack_name,
@@ -276,6 +308,8 @@ def score_tactic_candidates(
                 "score": score,
                 "matched_tags": matched_tags,
                 "goal_bonus": round(goal_bonus, 3),
+                "contract_tactic_bonus": contract_tactic_bonus,
+                "repeat_penalty": repeat_penalty,
                 "goal_id": (goal_plan or {}).get("goal_id"),
                 "params": dict(tactic.params),
                 "params_by_profile": {profile: dict(params) for profile, params in tactic.params_by_profile.items()},
@@ -285,6 +319,8 @@ def score_tactic_candidates(
                     "matched_strength": matched_strength,
                     "tag_bonus": tag_bonus,
                     "goal_bonus": round(goal_bonus, 3),
+                    "contract_tactic_bonus": contract_tactic_bonus,
+                    "repeat_penalty": repeat_penalty,
                     "detectability_penalty": tactic.detectability,
                     "execution_cost": tactic.cost,
                 },
@@ -311,3 +347,34 @@ def _params_for_profile(candidate: dict[str, Any], profile: str) -> dict[str, An
     if profile in params_by_profile:
         return dict(params_by_profile[profile])
     return dict(candidate.get("params", {}))
+
+
+def _select_tactic_candidate(
+    tactic_scores: list[dict[str, Any]],
+    *,
+    rng: Any | None,
+    exploration_rate: float,
+) -> tuple[dict[str, Any], str]:
+    if not tactic_scores:
+        raise ValueError("tactic_scores must not be empty")
+    if len(tactic_scores) > 1:
+        top = tactic_scores[0]
+        runner_up = tactic_scores[1]
+        if top.get("repeat_penalty", 0.0) >= 0.90 and runner_up["score"] >= top["score"] - 0.40:
+            return runner_up, "contract_compatible_repeat_guard"
+    if rng is None or exploration_rate <= 0.0 or len(tactic_scores) == 1:
+        return tactic_scores[0], "tag_scored_tactic_policy"
+    if rng.random() >= min(1.0, max(0.0, exploration_rate)):
+        return tactic_scores[0], "tag_scored_tactic_policy"
+
+    positive = [candidate for candidate in tactic_scores if candidate["score"] > 0]
+    if not positive:
+        return tactic_scores[0], "tag_scored_tactic_policy"
+    total = sum(candidate["score"] for candidate in positive)
+    pick = rng.uniform(0.0, total)
+    cursor = 0.0
+    for candidate in positive:
+        cursor += candidate["score"]
+        if pick <= cursor:
+            return candidate, "contract_compatible_tactic_exploration"
+    return positive[-1], "contract_compatible_tactic_exploration"

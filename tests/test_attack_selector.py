@@ -8,6 +8,14 @@ from dah_flawless.environment.state_factory import create_baseline_state, make_h
 from dah_flawless.situation_tagger import derive_tag_details
 
 
+class ExploreTailRng:
+    def random(self):
+        return 0.0
+
+    def uniform(self, low, high):
+        return high * 0.99
+
+
 class AttackSelectorTests(unittest.TestCase):
     def test_attack_selector_scores_candidates_from_tag_confidence(self):
         state = create_baseline_state(seed=1)
@@ -54,6 +62,58 @@ class AttackSelectorTests(unittest.TestCase):
             strategies,
             {"replay", "delay", "selective_drop", "ack_confusion", "metadata_poisoning"},
         )
+
+    def test_contract_compatible_tactic_exploration_can_select_non_top_tactic(self):
+        state = create_baseline_state(seed=1)
+        details = derive_tag_details(redact_state(state), make_history(state))
+        greedy = build_tactic("TIME_DESYNC_REPLAY", False, details, telemetry_probe_delta=24)
+
+        explored = build_tactic(
+            "TIME_DESYNC_REPLAY",
+            False,
+            details,
+            telemetry_probe_delta=24,
+            rng=ExploreTailRng(),
+            exploration_rate=1.0,
+        )
+
+        self.assertEqual(explored["selector"], "contract_compatible_tactic_exploration")
+        self.assertNotEqual(explored["strategy"], greedy["strategy"])
+        self.assertIn(
+            explored["strategy"],
+            {"replay", "delay", "selective_drop", "ack_confusion", "metadata_poisoning"},
+        )
+
+    def test_recent_tactic_repeat_penalty_reduces_replay_score(self):
+        state = create_baseline_state(seed=1)
+        details = derive_tag_details(redact_state(state), make_history(state))
+
+        baseline = score_tactic_candidates("TIME_DESYNC_REPLAY", details)
+        penalized = score_tactic_candidates(
+            "TIME_DESYNC_REPLAY",
+            details,
+            recent_tactics=["replay", "replay", "replay"],
+        )
+        baseline_by_strategy = {candidate["strategy"]: candidate for candidate in baseline}
+        penalized_by_strategy = {candidate["strategy"]: candidate for candidate in penalized}
+
+        self.assertLess(penalized_by_strategy["replay"]["score"], baseline_by_strategy["replay"]["score"])
+        self.assertGreater(penalized_by_strategy["replay"]["repeat_penalty"], 0)
+
+    def test_repeat_guard_selects_nearby_contract_compatible_alternative(self):
+        state = create_baseline_state(seed=1)
+        details = derive_tag_details(redact_state(state), make_history(state))
+
+        tactic = build_tactic(
+            "TIME_DESYNC_REPLAY",
+            False,
+            details,
+            telemetry_probe_delta=24,
+            recent_tactics=["replay", "replay", "replay"],
+        )
+
+        self.assertEqual(tactic["selector"], "contract_compatible_repeat_guard")
+        self.assertEqual(tactic["strategy"], "metadata_poisoning")
 
     def test_simulation_logs_attack_selector_score_tables(self):
         logs, _ = run_simulation(seed=42, rounds=3)

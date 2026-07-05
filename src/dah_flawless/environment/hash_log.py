@@ -33,6 +33,29 @@ def write_jsonl(path: Path, entries: Iterable[dict]) -> None:
             handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def reset_log_outputs(paths: Iterable[Path]) -> list[Path]:
+    """Delete selected log output files before a run.
+
+    This intentionally handles only explicit file paths. It never removes a
+    directory tree, so a reset cannot wipe unrelated local artifacts.
+    """
+
+    removed: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        normalized = path.resolve(strict=False)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if not path.exists():
+            continue
+        if path.is_dir():
+            raise IsADirectoryError(f"log reset target is a directory: {path}")
+        path.unlink()
+        removed.append(path)
+    return removed
+
+
 def read_jsonl(path: Path) -> list[dict]:
     with path.open("r", encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
