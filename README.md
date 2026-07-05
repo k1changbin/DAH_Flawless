@@ -38,6 +38,7 @@ raw_world -> Feature Extractor -> State Adapter
 | TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
 | Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain trust, detection sensitivity, escalation threshold 업데이트 |
 | Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
+| LLM Adapter | `src/dah_flawless/llm/` | 역할별 외부 LLM JSON 호출과 순수 코드 fallback 공통 계층 |
 | Blue Defense | `src/dah_flawless/blue/` | 탐지, 임무위험, 단계방어 |
 | Scorer | `src/dah_flawless/scoring/scorer.py` | 승패, evidence, detection/recovery window |
 | Dashboard | `streamlit_app.py` | raw_world sample 입력, 로그 분석 |
@@ -96,7 +97,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `69 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Policy Update Reviewer fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `74 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Attack Selector, EpisodeRunner, TrainingScheduler, Blue Feedback Learner, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 

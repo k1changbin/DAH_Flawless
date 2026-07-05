@@ -230,6 +230,8 @@ Fixed evaluation block: 3 episodes
 
 Policy Update Reviewer는 Red/Blue feedback learner가 만든 policy delta 후보를 심사한다. 외부 LLM reviewer는 선택사항이며, 대회 환경에서 외부 연결이 끊기거나 JSON/schema 검증에 실패하면 오프라인 `HeuristicPolicyUpdateReviewer`가 같은 bounded candidate 절차를 수행한다. 따라서 LLM이 없어도 전체 학습 루프는 순수 코드로 계속 실행된다.
 
+외부 LLM 호출은 `src/dah_flawless/llm/`의 공통 adapter를 통한다. 각 역할 모듈은 JSON schema와 local fallback을 함께 제공해야 하며, LLM 응답이 invalid하거나 연결이 끊기면 fallback 결과를 decision log에 남긴다.
+
 ## 4. Red Attack AI Structure
 
 우리가 설명할 Red AI는 아래 구조다.
@@ -526,6 +528,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | mutation engine | 구현 |
 | stealth/probe controller | 기본 구현 |
 | feedback learner | Red/Blue 기본 구현 |
+| LLM adapter | 구현 |
 | policy update reviewer | 구현 |
 | blue invariant defense | 구현 |
 | scorer | 구현 |

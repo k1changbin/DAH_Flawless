@@ -9,13 +9,11 @@ heuristic reviewer provides the same interface fully offline.
 from __future__ import annotations
 
 import json
-import os
-import urllib.error
-import urllib.request
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from dah_flawless.llm import LLMAdapterConfig, LLMJsonAdapter, LLMJsonResult
 from dah_flawless.schemas import decision
 
 DEFAULT_SCALES = (1.0, 0.75, 0.5, 0.25, 0.0)
@@ -122,19 +120,29 @@ class ExternalLLMPolicyUpdateReviewer(PolicyUpdateReviewer):
     def __init__(
         self,
         *,
-        base_url: str,
-        model: str,
+        base_url: str = "http://127.0.0.1:8000/v1",
+        model: str = "local-policy-reviewer",
         timeout_s: float = 2.0,
         api_key: str = "EMPTY",
         fallback: PolicyUpdateReviewer | None = None,
         scales: tuple[float, ...] = DEFAULT_SCALES,
+        llm_adapter: LLMJsonAdapter | None = None,
+        fallback_on_error: bool = True,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout_s = timeout_s
-        self.api_key = api_key
         self.fallback = fallback or HeuristicPolicyUpdateReviewer(scales=scales)
         self.scales = scales
+        self.llm_adapter = llm_adapter or LLMJsonAdapter(
+            LLMAdapterConfig(
+                enabled=True,
+                provider="openai_compatible",
+                base_url=base_url,
+                model=model,
+                timeout_s=timeout_s,
+                api_key=api_key,
+                fallback_on_error=fallback_on_error,
+            ),
+            role_name="policy_update_reviewer",
+        )
 
     def review_update(
         self,
@@ -154,11 +162,10 @@ class ExternalLLMPolicyUpdateReviewer(PolicyUpdateReviewer):
         )
         candidates = _build_candidates(before, proposed, self.scales)
 
-        try:
-            response = self._call_llm(agent, update_name, before, proposed, context, candidates)
+        result = self._complete_llm_review(agent, update_name, before, proposed, context, candidates)
+        if result.external_used:
+            response = result.data
             selected = _select_llm_candidate(response, candidates)
-            if selected is None:
-                raise ValueError("LLM selected no valid bounded candidate")
             log = decision(
                 self.name,
                 "policy_update_reviewed",
@@ -178,19 +185,22 @@ class ExternalLLMPolicyUpdateReviewer(PolicyUpdateReviewer):
                     "reason": response.get("reason", ""),
                     "candidates": candidates,
                     "external_llm_used": True,
+                    "llm_provider": result.provider,
+                    "llm_role": result.role_name,
                     "fallback_log": fallback_log,
                 },
             )
             return deepcopy(selected["value"]), log
-        except Exception as exc:
-            fallback_log = deepcopy(fallback_log)
-            fallback_log["reason"] = "external_llm_unavailable_or_invalid_fallback"
-            fallback_log["after"]["external_llm_used"] = False
-            fallback_log["after"]["fallback_error"] = str(exc)
-            fallback_log["after"]["fallback_reviewer"] = self.fallback.name
-            return fallback_value, fallback_log
 
-    def _call_llm(
+        fallback_log = deepcopy(fallback_log)
+        fallback_log["reason"] = "external_llm_unavailable_or_invalid_fallback"
+        fallback_log["after"]["external_llm_used"] = False
+        fallback_log["after"]["fallback_error"] = result.fallback_reason
+        fallback_log["after"]["fallback_reviewer"] = self.fallback.name
+        fallback_log["after"]["llm_role"] = result.role_name
+        return fallback_value, fallback_log
+
+    def _complete_llm_review(
         self,
         agent: str,
         update_name: str,
@@ -198,84 +208,53 @@ class ExternalLLMPolicyUpdateReviewer(PolicyUpdateReviewer):
         proposed: dict,
         context: dict,
         candidates: list[dict],
-    ) -> dict:
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You review bounded simulator policy updates. "
-                        "Never create attacks, payloads, exploit steps, RF instructions, or API attack procedures. "
-                        "Choose only one provided candidate scale. Return JSON only."
-                    ),
+    ) -> LLMJsonResult:
+        return self.llm_adapter.complete_json(
+            system_prompt=(
+                "You review bounded simulator policy updates. "
+                "Never create attacks, payloads, exploit steps, RF instructions, or API attack procedures. "
+                "Choose only one provided candidate scale. Return JSON only."
+            ),
+            user_payload={
+                "agent": agent,
+                "update_name": update_name,
+                "before": before,
+                "proposed": proposed,
+                "context": context,
+                "candidate_scales": [candidate["scale"] for candidate in candidates],
+                "required_schema": {
+                    "decision": "accept_or_reject",
+                    "selected_scale": "one_of_candidate_scales",
+                    "score": "0_to_1",
+                    "reason": "brief_simulation_only_reason",
                 },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "agent": agent,
-                            "update_name": update_name,
-                            "before": before,
-                            "proposed": proposed,
-                            "context": context,
-                            "candidate_scales": [candidate["scale"] for candidate in candidates],
-                            "required_schema": {
-                                "decision": "accept_or_reject",
-                                "selected_scale": "one_of_candidate_scales",
-                                "score": "0_to_1",
-                                "reason": "brief_simulation_only_reason",
-                            },
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                },
-            ],
-            "temperature": 0.0,
-            "max_tokens": 256,
-        }
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
             },
-            method="POST",
+            fallback=lambda reason: {},
+            validator=lambda data: _validate_policy_review_response(data, candidates),
+            temperature=0.0,
+            max_tokens=256,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
-            raise ConnectionError(str(exc)) from exc
-
-        content = body["choices"][0]["message"]["content"]
-        return _parse_json_object(content)
 
 
 def build_policy_update_reviewer(config_path: Path | None = None) -> PolicyUpdateReviewer:
     config = _load_config(config_path or DEFAULT_CONFIG_PATH)
-    if os.getenv("DAH_POLICY_REVIEW_ENABLED"):
-        config["enabled"] = os.getenv("DAH_POLICY_REVIEW_ENABLED", "").lower() in {"1", "true", "yes", "on"}
-    if os.getenv("DAH_POLICY_REVIEW_PROVIDER"):
-        config["provider"] = os.getenv("DAH_POLICY_REVIEW_PROVIDER")
-
     fallback = HeuristicPolicyUpdateReviewer(
         accept_threshold=float(config.get("accept_threshold", 0.55)),
         max_rejections=int(config.get("max_rejections", 3)),
     )
-    if not config.get("enabled", False):
+    llm_config = LLMAdapterConfig.from_mapping(
+        config,
+        enabled_env="DAH_POLICY_REVIEW_ENABLED",
+        provider_env="DAH_POLICY_REVIEW_PROVIDER",
+    )
+    if not llm_config.enabled:
         return fallback
-    if config.get("provider") != "openai_compatible":
+    if llm_config.provider != "openai_compatible":
         return fallback
 
     return ExternalLLMPolicyUpdateReviewer(
-        base_url=os.getenv("DAH_LLM_BASE_URL", config.get("base_url", "http://127.0.0.1:8000/v1")),
-        model=os.getenv("DAH_LLM_MODEL", config.get("model", "local-policy-reviewer")),
-        timeout_s=float(os.getenv("DAH_LLM_TIMEOUT_S", config.get("timeout_s", 2))),
-        api_key=os.getenv("DAH_LLM_API_KEY", config.get("api_key", "EMPTY")),
         fallback=fallback,
+        llm_adapter=LLMJsonAdapter(llm_config, role_name="policy_update_reviewer"),
     )
 
 
@@ -414,23 +393,14 @@ def _reason_for_score(agent: str, score: float, direction_score: float, magnitud
     return f"{agent} update rejected by bounded reviewer"
 
 
-def _parse_json_object(content: str) -> dict:
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:].strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("LLM response did not contain a JSON object")
-    data = json.loads(text[start : end + 1])
+def _validate_policy_review_response(data: dict, candidates: list[dict]) -> None:
     if data.get("decision") not in {"accept", "reject"}:
         raise ValueError("LLM response decision must be accept or reject")
     score = float(data.get("score", 0.0))
     if not 0.0 <= score <= 1.0:
         raise ValueError("LLM response score must be between 0 and 1")
-    return data
+    if _select_llm_candidate(data, candidates) is None:
+        raise ValueError("LLM selected no valid bounded candidate")
 
 
 def _select_llm_candidate(response: dict, candidates: list[dict]) -> dict | None:

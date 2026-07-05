@@ -157,6 +157,8 @@ Redaction Boundary
 
 Policy Update Reviewer는 Red/Blue feedback learner가 만든 정책 변동 후보를 심사한다. 외부 LLM reviewer는 `configs/policy_update_reviewer.json`으로 켤 수 있지만 기본값은 off이며, 외부 연결 실패나 invalid JSON이 발생하면 오프라인 heuristic reviewer가 같은 인터페이스로 즉시 대체된다.
 
+공통 LLM Adapter는 `src/dah_flawless/llm/`에 있다. 각 역할 모듈은 이 계층을 통해 외부 OpenAI-compatible JSON 응답을 요청하고, 실패하면 역할별 순수 코드 fallback으로 계속 진행한다.
+
 ## 9. Scorer 계획
 
 Scorer만 scorer_truth와 blue_observed를 동시에 본다.
@@ -201,6 +203,7 @@ for block in training_schedule:
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `BlueFeedbackLearner` | scorer 결과로 Blue domain trust/sensitivity/threshold 업데이트 | 구현 |
+| `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |
 | `MutationApprovalLLM` | proposed mutation의 이유, 허용 범위, 안전 경계 검토. reviewer-only | 설계 |
 | `MutationPolicy` | external_observe 허용 필드와 profile별 max delta 기준 | 핵심 필드 runtime enforcement 구현 |

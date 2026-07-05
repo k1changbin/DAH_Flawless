@@ -1,21 +1,28 @@
 import unittest
 
 from dah_flawless.environment.simulator import run_simulation
+from dah_flawless.llm import LLMAdapterConfig, LLMJsonAdapter
 from dah_flawless.policy_review import ExternalLLMPolicyUpdateReviewer, HeuristicPolicyUpdateReviewer
 
 
-class FailingExternalReviewer(ExternalLLMPolicyUpdateReviewer):
-    def _call_llm(self, *args, **kwargs):
+class FailingLLMAdapter(LLMJsonAdapter):
+    def _call_openai_compatible(self, **kwargs):
         raise ConnectionError("offline")
 
 
-class SelectingExternalReviewer(ExternalLLMPolicyUpdateReviewer):
-    def _call_llm(self, *args, **kwargs):
+class SelectingLLMAdapter(LLMJsonAdapter):
+    def _call_openai_compatible(self, **kwargs):
         return {
-            "decision": "accept",
-            "selected_scale": 0.5,
-            "score": 0.91,
-            "reason": "half-scale update is most plausible",
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"decision": "accept", "selected_scale": 0.5, '
+                            '"score": 0.91, "reason": "half-scale update is most plausible"}'
+                        )
+                    }
+                }
+            ]
         }
 
 
@@ -37,10 +44,9 @@ class PolicyUpdateReviewerTests(unittest.TestCase):
         self.assertFalse(log["after"]["external_llm_used"])
 
     def test_external_reviewer_falls_back_when_unavailable(self):
-        reviewer = FailingExternalReviewer(
-            base_url="http://127.0.0.1:1/v1",
-            model="offline-test",
+        reviewer = ExternalLLMPolicyUpdateReviewer(
             fallback=HeuristicPolicyUpdateReviewer(),
+            llm_adapter=FailingLLMAdapter(_enabled_config(), role_name="policy_update_reviewer"),
         )
 
         selected, log = reviewer.review_update(
@@ -64,10 +70,9 @@ class PolicyUpdateReviewerTests(unittest.TestCase):
         self.assertEqual(log["after"]["fallback_error"], "offline")
 
     def test_external_reviewer_can_select_bounded_scale(self):
-        reviewer = SelectingExternalReviewer(
-            base_url="http://127.0.0.1:1/v1",
-            model="offline-test",
+        reviewer = ExternalLLMPolicyUpdateReviewer(
             fallback=HeuristicPolicyUpdateReviewer(),
+            llm_adapter=SelectingLLMAdapter(_enabled_config(), role_name="policy_update_reviewer"),
         )
 
         selected, log = reviewer.review_update(
@@ -91,6 +96,10 @@ class PolicyUpdateReviewerTests(unittest.TestCase):
 
         self.assertIn("policy_update_review", red_update["after"])
         self.assertIn("policy_update_review", blue_update["after"])
+
+
+def _enabled_config() -> LLMAdapterConfig:
+    return LLMAdapterConfig(enabled=True, provider="openai_compatible", fallback_on_error=True)
 
 
 if __name__ == "__main__":
