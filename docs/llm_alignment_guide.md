@@ -74,6 +74,7 @@ DAH_Flawless/
     print_llm_alignment_guide.py
     run_world_generator.py
     run_feature_extractor.py
+    generate_training_report.py
   src/dah_flawless/
     world/
     attacks/
@@ -83,6 +84,8 @@ DAH_Flawless/
       episode_runner.py
       training_scheduler.py
       holdout_evaluator.py
+    reporting/
+      report_generator.py
     scoring/
     situation_tagger.py
   tests/
@@ -229,6 +232,8 @@ Fixed evaluation block: 3 episodes
 현재 구현에서는 `TrainingScheduler`가 이 cadence를 실행한다. Red policy state는 공격 weight, adaptive stealth set, telemetry probe delta를 저장한다. Blue policy state는 rule-based baseline에서 쓰는 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`를 저장한다. Blue update block에서는 Red policy를 고정하고 Blue policy만 업데이트하며, Red update block에서는 Blue policy를 고정하고 Red weight/probe만 업데이트한다. Fixed evaluation block에서는 둘 다 고정한다. `HoldoutEvaluator`는 이 최종 policy state를 복사해 scenario pack 전체에서 업데이트 없이 평가하며, MVP coverage용 scripted attack은 꺼서 학습된 policy 선택을 평가한다.
 
 현재 scenario pack은 `clean_start`, `degraded_start`, `satcom_delay`, `gnss_degraded`, `c2_metadata_noisy`, `telemetry_conflict`, `low_trust_start`다. 각 scenario는 실제 공격을 수행하지 않고 초기 world/observe/capability/policy 조건만 바꾼다.
+
+Report Generator는 training/holdout summary와 optional JSONL logs를 읽어 Markdown/JSON 보고서를 만든다. 이 모듈은 새 점수를 계산하지 않고, simulator/evaluator가 남긴 결과만 요약한다.
 
 현재 Blue는 rule-based baseline에 scorer feedback 기반 policy update를 붙인 형태다. 완전한 RL은 아니며, 보고서에서는 adaptive defense policy로 설명한다.
 
@@ -592,6 +597,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | Alternating TrainingScheduler | 구현 |
 | Holdout seed/scenario evaluator | 구현 |
 | Scenario Pack | 구현 |
+| Training/Holdout Report Generator | 구현 |
 | Mutation Approval Reviewer | 구현 |
 | Mutation Policy field-level enforcement | 핵심 필드 구현, YAML config 자동 로딩 구현 |
 | VAE world generator | 미구현 |

@@ -41,6 +41,7 @@ raw_world -> Feature Extractor -> State Adapter
 | TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
 | HoldoutEvaluator | `src/dah_flawless/environment/holdout_evaluator.py` | 학습 후 frozen Red/Blue policy를 별도 seed/scenario grid에서 평가 |
 | Scenario Pack | `src/dah_flawless/environment/state_factory.py`, `docs/scenario_pack.md` | clean/degraded/SATCOM/GNSS/C2 metadata/telemetry/low-trust 초기 조건 |
+| Report Generator | `src/dah_flawless/reporting/report_generator.py`, `docs/report_generator.md` | training/holdout summary를 보고서용 Markdown/JSON으로 변환 |
 | Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain/effect trust, sensitivity, threshold 업데이트 |
 | Causal Consistency Monitor | `src/dah_flawless/scoring/causal_consistency.py` | attack -> mutation -> tag/effect -> scorer evidence 인과 체인 검사 |
 | Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
@@ -79,6 +80,12 @@ python -m dah_flawless.main --seed 42 --training-schedule --steps-per-episode 30
 python -m dah_flawless.main --seed 42 --training-schedule --steps-per-episode 30 --holdout-eval --reset-logs --out data/logs/training_logs.jsonl --summary data/logs/training_summary.json --holdout-out data/logs/holdout_logs.jsonl --holdout-summary data/logs/holdout_summary.json
 ```
 
+학습/holdout 결과를 보고서용 Markdown으로 뽑으려면:
+
+```powershell
+python -m dah_flawless.main --seed 42 --training-schedule --holdout-eval --report-out data/reports/training_holdout_report.md --report-json data/reports/training_holdout_report.json
+```
+
 특정 scenario만 돌리려면:
 
 ```powershell
@@ -115,7 +122,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `119 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware Scorer, Blue Goal Consistency Checker, Effect-aware Blue Feedback Learner, Attack Selector, tactic diversity guard, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `121 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware Scorer, Blue Goal Consistency Checker, Effect-aware Blue Feedback Learner, Attack Selector, tactic diversity guard, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 

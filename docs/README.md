@@ -12,6 +12,7 @@
 | `mutation_policy.md` | Red가 변조할 수 있는 external observe 필드와 profile별 max delta |
 | `attack_effect_contracts.md` | 공격 후보와 기대 cyber-effect/성공 evidence를 묶는 contract |
 | `scenario_pack.md` | holdout 평가용 scenario pack과 각 scenario의 초기 조건 |
+| `report_generator.md` | training/holdout summary를 보고서용 Markdown/JSON으로 변환하는 방법 |
 | `situation_tags.md` | observed 기반 situation tag 정의 |
 | `attack_mapping.md` | 공격 3종과 schema/tag/방어 매핑 |
 | `encrypted_channel_attack_ai.md` | 암호화 통신 환경에서 Red AI가 공격 방법을 선택하는 설계 |

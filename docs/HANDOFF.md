@@ -44,6 +44,7 @@ raw_world
 - 학습 cadence는 Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes를 기본값으로 두며, `TrainingScheduler`로 구현되어 있다.
 - Holdout 평가는 학습이 끝난 Red/Blue policy를 frozen 상태로 복사한 뒤 별도 seed/scenario grid에서 돌린다. 이때 MVP coverage용 scripted attack은 꺼서 정책 자체의 일반화 성능을 본다.
 - Scenario Pack은 `clean_start`, `degraded_start`, `satcom_delay`, `gnss_degraded`, `c2_metadata_noisy`, `telemetry_conflict`, `low_trust_start`를 제공한다. 기본 holdout은 전체 scenario pack을 사용한다.
+- Report Generator는 training/holdout summary와 optional JSONL logs를 읽어 보고서용 Markdown/JSON을 만든다. `main.py --report-out` 또는 `scripts/generate_training_report.py`로 실행한다.
 
 ## 구조 원칙
 
@@ -80,6 +81,8 @@ raw_world
 | `src/dah_flawless/environment/training_scheduler.py` | alternating Blue/Red update scheduler |
 | `src/dah_flawless/environment/holdout_evaluator.py` | frozen-policy seed/scenario holdout evaluator |
 | `docs/scenario_pack.md` | scenario pack 목적과 초기 조건 |
+| `src/dah_flawless/reporting/report_generator.py` | training/holdout report generator |
+| `docs/report_generator.md` | report generator 사용법 |
 | `src/dah_flawless/blue/` | Blue detection/mission/defense/report agents |
 | `src/dah_flawless/scoring/scorer.py` | scorer 판정 |
 | `src/dah_flawless/scoring/goal_scorer.py` | Red cyber-effect 목표별 goal_success/goal_reward 판정 |

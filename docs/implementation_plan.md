@@ -62,6 +62,7 @@ scripts/
   print_llm_alignment_guide.py
   run_world_generator.py
   run_feature_extractor.py
+  generate_training_report.py
 src/dah_flawless/
   world/
     generator.py
@@ -77,6 +78,8 @@ src/dah_flawless/
   blue/
   environment/
     state_factory.py
+  reporting/
+    report_generator.py
   scoring/
     causal_consistency.py
 tests/
@@ -217,6 +220,7 @@ for block in training_schedule:
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `HoldoutEvaluator` | frozen Red/Blue policy를 별도 seed/scenario grid에서 평가 | 구현 |
 | `ScenarioPack` | clean/degraded/SATCOM/GNSS/C2 metadata/telemetry/low-trust 조건 제공 | 구현 |
+| `ReportGenerator` | training/holdout summary와 logs를 Markdown/JSON 보고서로 변환 | 구현 |
 | `GoalPlanner` | context + previous logs + UCB exploration + diversity guard로 Red cyber-effect 목표 선택 | 구현 |
 | `AttackEffectContract` | 공격 후보와 지원 goal/effect/evidence를 묶어 selector/scorer 정합성 기준 제공 | 구현 |
 | `CausalConsistencyMonitor` | attack -> mutation -> tag/effect -> scorer evidence 체인 검사 | 구현 |
@@ -241,6 +245,7 @@ for block in training_schedule:
 | Alternating TrainingScheduler | 구현 |
 | Holdout seed/scenario evaluator | 구현 |
 | Scenario Pack | 구현 |
+| Training/Holdout Report Generator | 구현 |
 | MutationApprovalReviewer | reviewer-only 구현 |
 | MutationPolicy field-level enforcement | 핵심 필드 구현, YAML config 자동 로딩 구현 |
 | 실제 RF/API adapter | 미구현 |

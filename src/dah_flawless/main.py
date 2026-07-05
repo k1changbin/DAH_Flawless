@@ -30,6 +30,7 @@ from dah_flawless.environment.holdout_evaluator import (
 )
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.training_scheduler import run_training_schedule
+from dah_flawless.reporting.report_generator import write_training_holdout_report
 from dah_flawless.world.state_adapter import build_state_from_raw_world
 
 
@@ -86,6 +87,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--holdout-out", type=Path, default=Path("data/logs/holdout_logs.jsonl"))
     parser.add_argument("--holdout-summary", type=Path, default=Path("data/logs/holdout_summary.json"))
     parser.add_argument(
+        "--report-out",
+        type=Path,
+        help="Optional markdown report path generated from the main run and optional holdout run.",
+    )
+    parser.add_argument(
+        "--report-json",
+        type=Path,
+        help="Optional structured JSON companion for --report-out.",
+    )
+    parser.add_argument(
         "--reset-logs",
         action="store_true",
         help="Delete the selected --out and --summary files before running.",
@@ -104,6 +115,10 @@ def main() -> None:
         reset_targets = [args.out, args.summary]
         if args.holdout_eval:
             reset_targets.extend([args.holdout_out, args.holdout_summary])
+        if args.report_out:
+            reset_targets.append(args.report_out)
+        if args.report_json:
+            reset_targets.append(args.report_json)
         removed = reset_log_outputs(reset_targets)
         removed_text = ", ".join(str(path) for path in removed) if removed else "none"
         print(f"reset log outputs: {removed_text}")
@@ -112,6 +127,8 @@ def main() -> None:
     if args.raw_world_sample:
         sample = _read_raw_world_sample(args.raw_world_sample)
         initial_state = build_state_from_raw_world(sample, seed=args.seed)
+    holdout_logs = None
+    holdout_summary = None
     if args.training_schedule:
         logs, summary = run_training_schedule(
             seed=args.seed,
@@ -172,6 +189,19 @@ def main() -> None:
         )
         print(f"wrote holdout summary to {args.holdout_summary}")
         print(holdout_summary)
+    if args.report_out:
+        report = write_training_holdout_report(
+            training_summary=summary,
+            holdout_summary=holdout_summary,
+            training_logs=logs,
+            holdout_logs=holdout_logs,
+            markdown_path=args.report_out,
+            json_path=args.report_json,
+        )
+        print(f"wrote report to {args.report_out}")
+        if args.report_json:
+            print(f"wrote report json to {args.report_json}")
+        print(report["comparison"])
     print(f"wrote summary to {args.summary}")
     print(summary)
 
