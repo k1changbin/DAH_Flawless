@@ -137,18 +137,22 @@ def _advance_normal_state(state: dict, round_number: int) -> dict:
     next_state["world"]["time"]["true_timestamp"] += ROUND_SECONDS
     next_state["world"]["command"]["expected_sequence_number"] += 1
 
+    world = next_state["world"]
     obs = next_state["blue_observed"]
-    obs["time"]["received_timestamp"] = next_state["world"]["time"]["true_timestamp"]
-    obs["c2_message"]["sequence_number"] = next_state["world"]["command"]["expected_sequence_number"]
-    obs["c2_message"]["command"] = next_state["world"]["command"]["last_valid_command"]
+    obs["time"]["received_timestamp"] = world["time"]["true_timestamp"]
+    obs["c2_message"]["sequence_number"] = world["command"]["expected_sequence_number"]
+    obs["c2_message"]["command"] = world["command"]["last_valid_command"]
     obs["comms"]["latency_ms"] = 180
     obs["comms"]["packet_loss"] = 0.02
     obs["comms"]["message_queue_depth"] = 3
-    obs["mission"]["area_priority"] = deepcopy(next_state["world"]["mission"]["area_priority"])
-    obs["mission"]["recommended_area"] = "A"
-    obs["telemetry"]["battery_percent"] = next_state["world"]["uav"]["battery_percent"]
-    obs["telemetry"]["battery_drain_rate"] = next_state["world"]["uav"]["battery_drain_rate"]
-    obs["telemetry"]["motor_status"] = next_state["world"]["uav"]["motor_status"]
+    obs["mission"]["area_priority"] = deepcopy(world["mission"]["area_priority"])
+    obs["mission"]["recommended_area"] = world["mission"]["current_area"]
+    obs["telemetry"]["battery_percent"] = world["uav"]["battery_percent"]
+    obs["telemetry"]["battery_drain_rate"] = world["uav"]["battery_drain_rate"]
+    obs["telemetry"]["motor_status"] = world["uav"]["motor_status"]
+    obs["telemetry"]["altitude_m"] = world["uav"]["position"]["altitude_m"]
+    obs["telemetry"]["speed_mps"] = world["uav"]["speed_mps"]
+    obs["telemetry"]["heading_deg"] = world["uav"]["heading_deg"]
     return next_state
 
 

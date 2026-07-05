@@ -7,13 +7,38 @@ from dah_flawless.attacks.red_agent import RedAgent
 from dah_flawless.blue.defense_planner import apply_defense_actions, plan_defense
 from dah_flawless.blue.invariants import analyze_invariants
 from dah_flawless.blue.tagger import derive_tags
+from dah_flawless.config import SCENARIOS
 from dah_flawless.environment.redaction import redact_state
-from dah_flawless.environment.simulator import run_simulation
+from dah_flawless.environment.scenarios import SCENARIO_PRESETS
+from dah_flawless.environment.simulator import _advance_normal_state, run_simulation
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
 from dah_flawless.schemas import DefenseAction, Threat
 
 
 class DegradedScenarioTests(unittest.TestCase):
+    def test_config_scenarios_match_presets(self):
+        self.assertEqual(SCENARIOS, tuple(SCENARIO_PRESETS))
+
+    def test_low_battery_fault_uses_scenario_world(self):
+        state = create_baseline_state(seed=1, scenario="low_battery_fault")
+
+        self.assertEqual(state["world"]["uav"]["battery_percent"], 14)
+        self.assertEqual(state["blue_observed"]["telemetry"]["battery_percent"], 14)
+        self.assertEqual(state["world"]["uav"]["motor_status"], "FAULT")
+        self.assertEqual(state["blue_observed"]["telemetry"]["motor_status"], "FAULT")
+
+    def test_urban_rf_noise_keeps_world_alignment_after_advance(self):
+        state = create_baseline_state(seed=1, scenario="urban_rf_noise")
+        advanced = _advance_normal_state(state, round_number=1)
+
+        self.assertEqual(advanced["world"]["mission"]["current_area"], "B")
+        self.assertEqual(advanced["blue_observed"]["mission"]["recommended_area"], "B")
+        self.assertEqual(advanced["blue_observed"]["telemetry"]["speed_mps"], 28)
+
+    def test_unknown_scenario_is_rejected(self):
+        with self.assertRaises(ValueError):
+            create_baseline_state(seed=1, scenario="missing")
+
     def test_degraded_start_lowers_availability_and_capabilities(self):
         state = create_baseline_state(seed=1, scenario="degraded_start")
         self.assertEqual(state["scenario"], "degraded_start")

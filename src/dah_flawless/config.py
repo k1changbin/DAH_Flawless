@@ -1,5 +1,7 @@
 """Shared constants for the DAH Flawless MVP."""
 
+from dah_flawless.environment.scenarios import SCENARIO_NAMES
+
 DEFAULT_SEED = 42
 DEFAULT_ROUNDS = 5
 
@@ -32,7 +34,7 @@ SCRIPTED_ATTACKS = (
 )
 
 # Scenario types (README and docs/implementation_plan.md).
-SCENARIOS = ("clean_start", "degraded_start")
+SCENARIOS = SCENARIO_NAMES
 DEFAULT_SCENARIO = "clean_start"
 
 # Red stealth modes: off = always loud, on = always stealth,

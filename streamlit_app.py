@@ -68,7 +68,7 @@ def _sidebar_controls() -> Path:
         "Scenario",
         SCENARIOS,
         index=0,
-        help="degraded_start begins partially paralyzed (low availability + degraded capabilities).",
+        help="Scenario presets control the initial world state and Blue starting conditions.",
     )
     red_stealth = st.sidebar.selectbox(
         "Red stealth",

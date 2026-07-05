@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from dah_flawless.config import BASE_TIMESTAMP, DEFAULT_SCENARIO
+from dah_flawless.environment.scenarios import get_scenario_preset
 
 
 def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
@@ -13,64 +14,63 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
     The world and observed values start aligned. Red mutations later change
     only blue_observed, while scorer keeps access to world.
 
-    scenario:
-      clean_start    - full capabilities, availability 1.0 (default).
-      degraded_start - starts partially paralyzed: lowered availability plus
-                       degraded cross-check / restore capabilities and GNSS,
-                       so Blue must detect and recover from a weakened footing.
+    Scenario presets live in ``environment.scenarios``. The selected preset
+    defines the initial world value, mission state, Blue capabilities, and any
+    Blue-observed overrides.
     """
 
-    world = {
-        "time": {"true_timestamp": BASE_TIMESTAMP, "round": 0},
-        "environment": {
-            "weather": "CLEAR",
-            "terrain": "LOW_MOUNTAIN",
-            "rf_noise_level": 0.21,
-            "gnss_interference": "NONE",
+    preset = get_scenario_preset(scenario, BASE_TIMESTAMP)
+    world = preset["world"]
+    blue_observed = _create_blue_observed(world)
+    _deep_update(blue_observed, preset["blue_observed"])
+
+    return {
+        "round": 0,
+        "seed": seed,
+        "scenario": scenario,
+        "world": world,
+        "blue_observed": blue_observed,
+        "mission": preset["mission"],
+        "capabilities": preset["capabilities"],
+        "defense_runtime": {
+            "active_defense_slots": 2,
+            "active_defenses": [],
+            "pending_defenses": [],
+            "domain_trust": {"telemetry": 1.0, "mission": 1.0, "command": 1.0},
         },
-        "uav": {
-            "position": {"lat": 37.123, "lon": 127.456, "altitude_m": 180},
-            "speed_mps": 42,
-            "heading_deg": 91,
-            "battery_percent": 20,
-            "battery_drain_rate": 1.0,
-            "motor_status": "FAULT",
-        },
-        "mission": {
-            "current_area": "A",
-            "area_priority": {"A": 0.90, "B": 0.40, "C": 0.20},
-            "return_required": True,
-        },
-        "command": {
-            "expected_sequence_number": 1021,
-            "last_valid_command": "RETURN_TO_BASE",
-        },
+        "last_known_good": deepcopy(blue_observed),
     }
 
-    blue_observed = {
-        "time": {"received_timestamp": BASE_TIMESTAMP, "local_clock_offset_ms": 430},
+
+def _create_blue_observed(world: dict) -> dict:
+    position = world["uav"]["position"]
+    return {
+        "time": {
+            "received_timestamp": world["time"]["true_timestamp"],
+            "local_clock_offset_ms": 430,
+        },
         "telemetry": {
-            "battery_percent": 20,
-            "battery_drain_rate": 1.0,
-            "motor_status": "FAULT",
-            "altitude_m": 180,
-            "speed_mps": 42,
-            "heading_deg": 91,
+            "battery_percent": world["uav"]["battery_percent"],
+            "battery_drain_rate": world["uav"]["battery_drain_rate"],
+            "motor_status": world["uav"]["motor_status"],
+            "altitude_m": position["altitude_m"],
+            "speed_mps": world["uav"]["speed_mps"],
+            "heading_deg": world["uav"]["heading_deg"],
         },
         "navigation": {
             "gnss_fix_quality": "NORMAL",
             "satellite_count": 7,
             "hdop": 1.4,
             "cn0_avg": 35.0,
-            "imu_position_estimate": {"lat": 37.123, "lon": 127.456},
+            "imu_position_estimate": {"lat": position["lat"], "lon": position["lon"]},
         },
         "mission": {
-            "area_priority": {"A": 0.90, "B": 0.40, "C": 0.20},
-            "recommended_area": "A",
+            "area_priority": deepcopy(world["mission"]["area_priority"]),
+            "recommended_area": world["mission"]["current_area"],
         },
         "c2_message": {
-            "sequence_number": 1021,
-            "command": "RETURN_TO_BASE",
+            "sequence_number": world["command"]["expected_sequence_number"],
+            "command": world["command"]["last_valid_command"],
             "sysid": 1,
             "compid": 1,
             "msgid": 76,
@@ -89,39 +89,13 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
         },
     }
 
-    mission = {"availability": 1.0, "trust_budget": 1.0}
-    capabilities = {
-        "cross_check_telemetry": "OK",
-        "trusted_restore": "OK",
-        "time_validation": "OK",
-    }
 
-    if scenario == "degraded_start":
-        # Start partially paralyzed: recovery footing is weak and cross-checks
-        # are degraded, so the same violation is harder for Blue to confirm.
-        mission["availability"] = 0.55
-        capabilities["cross_check_telemetry"] = "DEGRADED"
-        capabilities["trusted_restore"] = "DEGRADED"
-        blue_observed["navigation"]["gnss_fix_quality"] = "DEGRADED"
-        blue_observed["navigation"]["satellite_count"] = 4
-        blue_observed["navigation"]["hdop"] = 6.2
-
-    return {
-        "round": 0,
-        "seed": seed,
-        "scenario": scenario,
-        "world": world,
-        "blue_observed": blue_observed,
-        "mission": mission,
-        "capabilities": capabilities,
-        "defense_runtime": {
-            "active_defense_slots": 2,
-            "active_defenses": [],
-            "pending_defenses": [],
-            "domain_trust": {"telemetry": 1.0, "mission": 1.0, "command": 1.0},
-        },
-        "last_known_good": deepcopy(blue_observed),
-    }
+def _deep_update(target: dict, overrides: dict) -> None:
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = deepcopy(value)
 
 
 def make_history(state: dict) -> dict:
