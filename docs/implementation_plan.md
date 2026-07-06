@@ -219,6 +219,7 @@ for block in training_schedule:
 | 모듈 | 역할 | 현재 상태 |
 |---|---|---|
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
+| `RoundCombatRunner` | 1 round를 최대 100개 decision step의 Red/Blue 공방 episode로 실행 | 실험 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
 | `RollingLogMemory` | 긴 round-mode run에서 previous_logs context를 압축 proxy logs로 교체 | 구현 |
 | `HoldoutEvaluator` | frozen Red/Blue policy를 별도 seed/scenario grid에서 평가, cross-case previous logs로 holdout attack diversity penalty 적용 | 구현 |
@@ -245,6 +246,7 @@ for block in training_schedule:
 |---|---|
 | VAE/CVAE world generator | 미구현 |
 | 30-step EpisodeRunner | 구현 |
+| Dynamic RoundCombatRunner | 실험 구현 |
 | Alternating TrainingScheduler | 구현 |
 | Rolling Log Memory | 구현 |
 | Holdout seed/scenario evaluator | 구현 |

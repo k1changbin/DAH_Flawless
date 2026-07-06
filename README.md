@@ -38,6 +38,7 @@ raw_world -> Feature Extractor -> State Adapter
 | Attack Selector | `src/dah_flawless/attacks/selector.py` | 태그/contract 기반 후보 점수화, 최근 공격 반복 감점 attack diversity penalty |
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed 변조 |
 | EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
+| RoundCombatRunner | `src/dah_flawless/environment/round_combat_runner.py` | 1 round를 최대 100개 decision step의 동적 Red/Blue 공방 episode로 실행 |
 | TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
 | Rolling Log Memory | `src/dah_flawless/environment/log_memory.py` | 일정 라운드마다 Red planning context를 압축 proxy log로 교체해 장기 반복 편향 완화 |
 | HoldoutEvaluator | `src/dah_flawless/environment/holdout_evaluator.py` | 학습 후 frozen Red/Blue policy를 별도 seed/scenario grid에서 평가, cross-case diversity penalty 적용 |
@@ -67,6 +68,13 @@ python -m dah_flawless.main --seed 42 --rounds 5 --reset-logs --out data/logs/ro
 
 ```powershell
 python -m dah_flawless.main --seed 42 --episodes 2 --steps-per-episode 30 --reset-logs --out data/logs/episode_logs.jsonl --summary data/logs/episode_summary.json
+```
+
+실험용 동적 round-level combat episode를 직접 호출하려면:
+
+```powershell
+$env:PYTHONPATH='src'
+python -c "from dah_flawless.environment.round_combat_runner import run_combat_rounds; logs, summary = run_combat_rounds(seed=42, rounds=3, max_steps=30); print(summary)"
 ```
 
 Blue-only -> Red-only -> fixed-eval 학습 cadence로 실행하려면:
@@ -131,7 +139,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `131 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `133 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -144,6 +152,8 @@ python -m unittest discover -s tests
 | `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `red_goal` | Red Goal Planner가 선택한 cyber-effect 목표 |
+| `combat_steps` | RoundCombatRunner 실행 시 step별 Red/Blue action, suspicion, budget, 중간 score |
+| `termination_reason` | RoundCombatRunner가 episode를 끝낸 이유. 예: red_abort, red_finalized_detected, max_steps |
 | `blue_policy_state` | Blue의 domain/effect sensitivity, threshold, trust, feedback count, effect별 mission-impact EMA |
 | `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
 | `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |

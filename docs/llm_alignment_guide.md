@@ -202,6 +202,8 @@ raw_world + features
 
 현재 코드의 `round`는 단일 simulation step이고, `EpisodeRunner`가 여러 step을 1개 episode로 묶는다. 기본 보고서 단위는 `--episodes N --steps-per-episode 30` 실행으로 만든다.
 
+실험용으로 `RoundCombatRunner`도 제공한다. 이 경로에서는 1 round가 하나의 variable-length combat episode이며, Red/Blue가 매 step마다 공격, 탐색, 방어, 내부 점검, 대기 중 하나를 고른다. step은 고정 시간 단위가 아니라 decision event이며, Red/Blue 중 하나가 종료 판단을 내리거나 max step에 도달하면 round가 끝난다. 이 runner는 기존 `run_simulation` 기본 경로를 대체하지 않고, 동적 공방 설계를 검증하기 위한 병렬 실행 계층이다.
+
 World Generator의 인과성은 전부 LLM에게 자유 생성시키지 않는다. 기본 수치 변화와 물리적 제약은 rule-based transition이 맡고, LLM은 다음 역할의 **causal supervisor**로 둔다.
 
 | 역할 | 설명 |
@@ -606,6 +608,7 @@ main 브랜치와 병합할 때는 `red_policy_state`, `blue_policy_state`, `fee
 | blue invariant defense | 구현 |
 | scorer | 구현 |
 | 30-step EpisodeRunner | 구현 |
+| Dynamic RoundCombatRunner | 실험 구현 |
 | Alternating TrainingScheduler | 구현 |
 | Rolling Log Memory | 구현 |
 | Holdout seed/scenario evaluator | 구현 |

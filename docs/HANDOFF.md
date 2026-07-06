@@ -1,6 +1,6 @@
 # DAH Flawless Handoff
 
-최종 갱신: 2026-07-06
+최종 갱신: 2026-07-07
 
 ## 현재 방향
 
@@ -21,6 +21,7 @@ raw_world
 
 - 보고서용 기준에서 1 episode는 30 consecutive timesteps다.
 - 현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다.
+- `RoundCombatRunner`는 실험용 동적 공방 runner다. 여기서는 1 round가 하나의 variable-length combat episode이며, Red/Blue가 `WAIT`, `PROBE_BOUNDARY`, `SLOW_DRIFT`, `INSPECT_INTERNAL`, `DEFEND`, `ABORT` 같은 decision step을 반복하다가 종료 조건이나 max step에 도달하면 끝난다. 기존 `run_simulation` 기본 흐름은 아직 유지한다.
 - World Generator는 rule-based transition을 기본으로 하고, LLM은 causal supervisor/reviewer로만 사용한다.
 - Mutation Approval Reviewer는 reviewer-only다. approve/clamp/reject/explain만 가능하고, 공격 선택·변조값 생성·state 수정·payload 생성은 하지 않는다.
 - Red 공격 범위는 simulated observe mutation과 channel-level delay/drop/jitter/reorder/loss abstraction까지 포함한다.
@@ -81,6 +82,7 @@ raw_world
 | `src/dah_flawless/mutation_review/` | mutation approval reviewer and external-LLM fallback |
 | `src/dah_flawless/policy_review/` | bounded policy update reviewer and external-LLM fallback |
 | `src/dah_flawless/environment/episode_runner.py` | 30-step episode runner |
+| `src/dah_flawless/environment/round_combat_runner.py` | variable-length round-level Red/Blue combat episode runner |
 | `src/dah_flawless/environment/training_scheduler.py` | alternating Blue/Red update scheduler |
 | `src/dah_flawless/environment/log_memory.py` | round-mode rolling log memory compression and proxy context |
 | `src/dah_flawless/environment/holdout_evaluator.py` | frozen-policy seed/scenario holdout evaluator, cross-case diversity context |
