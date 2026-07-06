@@ -40,8 +40,11 @@ class ReportGeneratorTests(unittest.TestCase):
         self.assertEqual(report["report_type"], "training_holdout_report")
         self.assertTrue(report["training"]["overview"]["hash_chain_ok"])
         self.assertTrue(report["holdout"]["overview"]["hash_chain_ok"])
+        self.assertIn("avg_mission_impact_score", report["training"]["metrics"])
+        self.assertIn("mission_impact_delta", report["comparison"])
         self.assertEqual(len(report["holdout"]["scenario_rows"]), 2)
         self.assertIn("Training Overview", markdown)
+        self.assertIn("avg_mission_impact_score", markdown)
         self.assertIn("Holdout Scenario Results", markdown)
         self.assertIn("satcom_delay", markdown)
 

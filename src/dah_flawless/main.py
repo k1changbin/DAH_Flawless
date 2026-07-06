@@ -102,6 +102,23 @@ def parse_args() -> argparse.Namespace:
         help="Delete the selected --out and --summary files before running.",
     )
     parser.add_argument(
+        "--memory-compaction-interval",
+        type=int,
+        default=0,
+        help="Compress Red planning context every N rounds. 0 disables rolling log memory.",
+    )
+    parser.add_argument(
+        "--memory-proxy-size",
+        type=int,
+        default=12,
+        help="Number of synthetic proxy logs retained after each memory compaction.",
+    )
+    parser.add_argument(
+        "--memory-out",
+        type=Path,
+        help="Optional JSON file that stores rolling compressed memory snapshots.",
+    )
+    parser.add_argument(
         "--raw-world-sample",
         type=Path,
         help="Optional raw-world JSON or JSONL sample used to initialize the simulation.",
@@ -111,6 +128,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.memory_compaction_interval and (args.training_schedule or args.episodes is not None):
+        raise ValueError("rolling log memory is currently supported for round mode; use --rounds without episode mode")
     if args.reset_logs:
         reset_targets = [args.out, args.summary]
         if args.holdout_eval:
@@ -119,6 +138,8 @@ def main() -> None:
             reset_targets.append(args.report_out)
         if args.report_json:
             reset_targets.append(args.report_json)
+        if args.memory_out:
+            reset_targets.append(args.memory_out)
         removed = reset_log_outputs(reset_targets)
         removed_text = ", ".join(str(path) for path in removed) if removed else "none"
         print(f"reset log outputs: {removed_text}")
@@ -167,6 +188,9 @@ def main() -> None:
             stealth_mode=args.red_stealth,
             mutation_profile=args.mutation_profile,
             initial_state=initial_state,
+            memory_compaction_interval=args.memory_compaction_interval,
+            memory_proxy_size=args.memory_proxy_size,
+            memory_path=args.memory_out,
         )
         print(f"wrote {len(logs)} rounds to {args.out}")
     if args.holdout_eval:

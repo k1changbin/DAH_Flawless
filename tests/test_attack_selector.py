@@ -100,6 +100,24 @@ class AttackSelectorTests(unittest.TestCase):
         self.assertLess(penalized_by_strategy["replay"]["score"], baseline_by_strategy["replay"]["score"])
         self.assertGreater(penalized_by_strategy["replay"]["repeat_penalty"], 0)
 
+    def test_recent_attack_repeat_penalty_reduces_repeated_attack_score(self):
+        state = create_baseline_state(seed=1)
+        details = derive_tag_details(redact_state(state), make_history(state))
+        weights = {attack.name: attack.weight for attack in realistic_attacks()}
+        previous_logs = [{"attack": {"name": "TIME_DESYNC_REPLAY"}} for _ in range(6)]
+
+        baseline = score_attack_candidates(realistic_attacks(), weights, details)
+        penalized = score_attack_candidates(realistic_attacks(), weights, details, previous_logs=previous_logs)
+        baseline_by_attack = {candidate["attack"]: candidate for candidate in baseline}
+        penalized_by_attack = {candidate["attack"]: candidate for candidate in penalized}
+
+        self.assertLess(
+            penalized_by_attack["TIME_DESYNC_REPLAY"]["score"],
+            baseline_by_attack["TIME_DESYNC_REPLAY"]["score"],
+        )
+        self.assertGreater(penalized_by_attack["TIME_DESYNC_REPLAY"]["attack_repeat_penalty"], 0)
+        self.assertGreater(penalized_by_attack["PRIORITY_POISONING"]["attack_underused_bonus"], 0)
+
     def test_repeat_guard_selects_nearby_contract_compatible_alternative(self):
         state = create_baseline_state(seed=1)
         details = derive_tag_details(redact_state(state), make_history(state))

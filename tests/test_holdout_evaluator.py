@@ -39,6 +39,39 @@ class HoldoutEvaluatorTests(unittest.TestCase):
         self.assertTrue(all(not entry["update_mode"]["blue_update_enabled"] for entry in logs))
         self.assertTrue(all(entry["decision_log"][0]["reason"] != "scripted_mvp_coverage" for entry in logs))
         self.assertIn("generalization_flags", summary)
+        self.assertEqual(
+            summary["holdout_diversity_penalty"],
+            {
+                "enabled": True,
+                "scope": "cross_case_previous_logs",
+                "attack_window": 8,
+                "policy_updates_remain_frozen": True,
+            },
+        )
+
+    def test_holdout_diversity_penalty_is_visible_in_candidate_scores(self):
+        _, training_summary = run_training_schedule(
+            seed=42,
+            blue_update_episodes=1,
+            red_update_episodes=1,
+            eval_episodes=0,
+            steps_per_episode=3,
+        )
+
+        logs, _ = run_holdout_evaluation(
+            red_policy_state=training_summary["final_red_policy_state"],
+            blue_policy_state=training_summary["final_blue_policy_state"],
+            seeds=(142,),
+            scenarios=("clean_start", "satcom_delay", "gnss_degraded"),
+            steps_per_case=2,
+        )
+
+        penalties = []
+        for entry in logs:
+            scores = entry["decision_log"][0]["after"]["attack_candidate_scores"]
+            penalties.extend(candidate["attack_repeat_penalty"] for candidate in scores)
+
+        self.assertTrue(any(penalty > 0 for penalty in penalties))
 
     def test_holdout_rejects_unknown_scenario(self):
         with self.assertRaises(ValueError):

@@ -15,6 +15,11 @@ def summarize_logs(logs: list[dict]) -> dict:
     attack_successes = sum(1 for entry in logs if entry["score"]["attack_success"])
     goal_successes = sum(1 for entry in logs if entry["score"].get("goal_success"))
     goal_rewards = [float(entry["score"].get("goal_reward", 0.0)) for entry in logs]
+    mission_impacts = [
+        float(entry["score"].get("evidence", {}).get("mission_impact", {}).get("mission_impact_score", 0.0))
+        for entry in logs
+    ]
+    high_mission_impacts = sum(1 for impact in mission_impacts if impact >= 0.75)
     availability = [entry["score"]["availability"] for entry in logs]
     causal_scores = [
         float(entry.get("causal_consistency", {}).get("consistency_score", 0.0))
@@ -36,6 +41,8 @@ def summarize_logs(logs: list[dict]) -> dict:
         "attack_success_rate": round(attack_successes / len(logs), 4) if logs else 0.0,
         "goal_success_rate": round(goal_successes / len(logs), 4) if logs else 0.0,
         "avg_goal_reward": round(sum(goal_rewards) / len(goal_rewards), 4) if goal_rewards else 0.0,
+        "avg_mission_impact_score": round(sum(mission_impacts) / len(mission_impacts), 4) if mission_impacts else 0.0,
+        "high_mission_impact_count": high_mission_impacts,
         "avg_causal_consistency": round(sum(causal_scores) / len(causal_scores), 4) if causal_scores else 0.0,
         "causal_warning_count": causal_warnings,
         "causal_failure_count": causal_failures,

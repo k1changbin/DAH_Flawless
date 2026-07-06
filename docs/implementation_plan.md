@@ -119,7 +119,7 @@ Observer
 | Observer | redacted state와 tag 입력 |
 | Situation Tagger | `src/dah_flawless/situation_tagger.py` |
 | Goal Planner | `src/dah_flawless/attacks/goal_planner.py`. 이전 로그와 현재 context 기반 cyber-effect 목표 선택. 최근 목표/domain 반복 감점과 저사용 목표 보너스가 포함된다 |
-| Attack Selector | `src/dah_flawless/attacks/selector.py`. `effect_contracts.py`의 Attack-Effect Contract로 목표-공격 정합성을 점수화하고 repeat guard로 contract-compatible tactic 다양성 유지 |
+| Attack Selector | `src/dah_flawless/attacks/selector.py`. `effect_contracts.py`의 Attack-Effect Contract로 목표-공격 정합성을 점수화하고 attack-level diversity penalty와 repeat guard로 contract-compatible attack/tactic 다양성 유지 |
 | Mutation Policy | `configs/mutation_policy.yaml`, `docs/mutation_policy.md` |
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` |
 | Stealth Controller | `red_agent.py`의 stealth/tactic |
@@ -161,7 +161,7 @@ Redaction Boundary
 - defense action에는 availability cost가 있다.
 - 과방어는 `RED_ATTRITION`으로 이어질 수 있다.
 
-현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, 놓친 cyber-effect는 해당 effect sensitivity를 올리고 effect threshold를 낮춘다. false positive나 과방어 비용이 크면 domain/effect sensitivity를 낮추고 threshold를 올린다. policy saturation guard는 domain trust가 0으로 붕괴하지 않도록 floor를 적용하고 로그에 guard event를 남긴다.
+현재 Blue Feedback Learner는 `blue_policy_state`를 업데이트한다. 이 상태는 domain별 `domain_trust`, `detection_sensitivity`, `escalation_threshold`, `feedback_counts`와 effect별 `effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`, `effect_mission_impact_ema`로 구성된다. missed attack이면 해당 domain의 sensitivity를 올리고 escalation threshold를 낮추며, 놓친 cyber-effect는 해당 effect sensitivity를 올리고 effect threshold를 낮춘다. mission-impact가 높은 effect를 놓치거나 탐지 후 복구하지 못하면 sensitivity/threshold 보정폭을 더 크게 적용한다. `DETECTION_BOUNDARY_PROBE`는 meta goal이므로 독립 effect로 누적하지 않고 mission-impact component나 실제 감지된 하위 effect로 remap한다. `HOLD_COMMAND`는 현재 `internal_observe.c2_message`를 trusted command anchor로 우선 사용한다. false positive나 과방어 비용이 크면 domain/effect sensitivity를 낮추고 threshold를 올린다. policy saturation guard는 domain trust가 0으로 붕괴하지 않도록 floor를 적용하고 로그에 guard event를 남긴다.
 
 Policy Update Reviewer는 Red/Blue feedback learner가 만든 정책 변동 후보를 심사한다. 외부 LLM reviewer는 `configs/policy_update_reviewer.json`으로 켤 수 있지만 기본값은 off이며, 외부 연결 실패나 invalid JSON이 발생하면 오프라인 heuristic reviewer가 같은 인터페이스로 즉시 대체된다.
 
@@ -176,6 +176,8 @@ Scorer만 scorer_truth와 blue_observed를 동시에 본다.
 기본 `attack_success`는 target domain에서 scorer_truth와 observed가 의미 있게 벌어졌는지를 본다. `goal_success`는 Red Goal Planner가 선택한 cyber-effect 목표가 달성됐는지를 따로 본다. 예를 들어 같은 command domain이라도 stale command, ACK 인과 혼란, channel state suppression은 서로 다른 evidence로 채점한다.
 
 `AttackEffectContract`는 공격 후보와 기대 effect를 명시적으로 연결한다. Attack Selector는 contract alignment를 후보 점수에 곱하고, Goal-aware Scorer는 unsupported attack-goal pair를 low-reward 실패로 clamp한다. 따라서 `PRIORITY_POISONING -> COMMAND_STALE_ACCEPTANCE` 같은 의미상 어색한 조합은 태그 점수가 높더라도 학습 보상을 받기 어렵다.
+
+`MissionImpactScorer`는 단순 mismatch가 아니라 임무판단, telemetry safety, command freshness, availability pressure가 얼마나 흔들렸는지 별도로 점수화한다. 이 값은 `score.evidence.mission_impact`와 summary/report의 `avg_mission_impact_score`에 남고, contract-supported goal의 `goal_reward`에만 제한적으로 반영된다.
 
 `CausalConsistencyMonitor`는 각 라운드에서 attack contract, mutation path, situation/effect tag, scorer evidence가 이어지는지 검사한다. summary에는 `avg_causal_consistency`, `causal_warning_count`, `causal_failure_count`, `attack_entropy`, `tactic_entropy`가 기록된다.
 
@@ -218,15 +220,16 @@ for block in training_schedule:
 |---|---|---|
 | `EpisodeRunner` | 30 timestep을 하나의 episode로 묶음 | 구현 |
 | `TrainingScheduler` | Blue-only/Red-only/fixed-eval block 전환 | 구현 |
-| `HoldoutEvaluator` | frozen Red/Blue policy를 별도 seed/scenario grid에서 평가 | 구현 |
+| `RollingLogMemory` | 긴 round-mode run에서 previous_logs context를 압축 proxy logs로 교체 | 구현 |
+| `HoldoutEvaluator` | frozen Red/Blue policy를 별도 seed/scenario grid에서 평가, cross-case previous logs로 holdout attack diversity penalty 적용 | 구현 |
 | `ScenarioPack` | clean/degraded/SATCOM/GNSS/C2 metadata/telemetry/low-trust 조건 제공 | 구현 |
 | `ReportGenerator` | training/holdout summary와 logs를 Markdown/JSON 보고서로 변환 | 구현 |
 | `GoalPlanner` | context + previous logs + UCB exploration + diversity guard로 Red cyber-effect 목표 선택 | 구현 |
 | `AttackEffectContract` | 공격 후보와 지원 goal/effect/evidence를 묶어 selector/scorer 정합성 기준 제공 | 구현 |
 | `CausalConsistencyMonitor` | attack -> mutation -> tag/effect -> scorer evidence 체인 검사 | 구현 |
-| `GoalAwareScorer` | selected cyber-effect 목표별 success/reward/evidence 산출 | 구현 |
+| `GoalAwareScorer` | selected cyber-effect 목표별 success/reward/evidence 산출, mission-impact reward 보정 | 구현 |
 | `BlueGoalConsistencyChecker` | observed-only internal/external/history 정합성으로 cyber-effect hypothesis 생성 | 구현 |
-| `BlueFeedbackLearner` | scorer 결과로 Blue domain/effect sensitivity/threshold 업데이트 | 구현 |
+| `BlueFeedbackLearner` | scorer 결과로 Blue domain/effect sensitivity/threshold 업데이트, effect별 mission-impact EMA/보정, boundary-probe meta goal remap | 구현 |
 | `LLMAdapter` | 역할별 외부 LLM JSON 호출, 검증, fallback 공통 처리 | 구현 |
 | `PolicyUpdateReviewer` | Red/Blue policy delta 후보 심사, 외부 LLM 실패 시 fallback | 구현 |
 | `MutationApprovalReviewer` | proposed observe mutation의 허용 범위 심사, 외부 LLM 실패 시 fallback | 구현 |
@@ -243,7 +246,10 @@ for block in training_schedule:
 | VAE/CVAE world generator | 미구현 |
 | 30-step EpisodeRunner | 구현 |
 | Alternating TrainingScheduler | 구현 |
+| Rolling Log Memory | 구현 |
 | Holdout seed/scenario evaluator | 구현 |
+| Holdout diversity penalty | 구현 |
+| Mission-impact scorer/report metrics | 구현 |
 | Scenario Pack | 구현 |
 | Training/Holdout Report Generator | 구현 |
 | MutationApprovalReviewer | reviewer-only 구현 |

@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
+from dah_flawless.attacks.selector import ATTACK_DIVERSITY_WINDOW
 from dah_flawless.config import DEFAULT_SCENARIO, DEFAULT_SEED, DEFAULT_STEPS_PER_EPISODE, SCENARIOS
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
 from dah_flawless.environment.simulator import run_simulation
@@ -59,7 +60,7 @@ def run_holdout_evaluation(
                 blue_update_enabled=False,
                 red_policy_state=deepcopy(red_policy_state),
                 blue_policy_state=deepcopy(blue_policy_state),
-                previous_logs=[],
+                previous_logs=deepcopy(all_logs),
                 scripted_attacks=(),
             )
             for step_log in step_logs:
@@ -111,6 +112,12 @@ def run_holdout_evaluation(
             "case_summaries": case_summaries,
             "generalization_flags": _generalization_flags(summary=summary),
             "scripted_red_coverage": False,
+            "holdout_diversity_penalty": {
+                "enabled": True,
+                "scope": "cross_case_previous_logs",
+                "attack_window": ATTACK_DIVERSITY_WINDOW,
+                "policy_updates_remain_frozen": True,
+            },
         }
     )
     if log_path is not None:

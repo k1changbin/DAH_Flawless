@@ -21,6 +21,8 @@ class GoalAwareScorerTests(unittest.TestCase):
 
         self.assertIn("goal_success_rate", summary)
         self.assertIn("avg_goal_reward", summary)
+        self.assertIn("avg_mission_impact_score", summary)
+        self.assertIn("high_mission_impact_count", summary)
         self.assertIn("goals", summary)
 
     def test_wrong_target_goal_scores_priority_drift(self):
@@ -62,6 +64,29 @@ class GoalAwareScorerTests(unittest.TestCase):
 
         self.assertTrue(score.goal_success)
         self.assertEqual(score.evidence["goal_score"]["evidence"]["ack_gap"], 2)
+
+    def test_mission_impact_scores_high_for_hidden_safety_fault(self):
+        state = create_baseline_state(seed=1)
+        # Baseline truth is battery=20, motor=FAULT, return_required=True.
+        state["blue_observed"]["telemetry"]["battery_percent"] = 82
+        state["blue_observed"]["telemetry"]["motor_status"] = "OK"
+        attack = get_attack("TELEMETRY_FDI")
+        score = score_round(
+            state,
+            state,
+            attack,
+            threats=[],
+            actions=[],
+            red_goal={"goal_id": "TELEMETRY_TRUST_EROSION", "intended_effect": "hide safety fault"},
+        )
+
+        impact = score.evidence["mission_impact"]
+        goal_score = score.evidence["goal_score"]
+        self.assertGreaterEqual(impact["mission_impact_score"], 0.75)
+        self.assertEqual(impact["primary_component"], "telemetry_safety")
+        self.assertEqual(goal_score["mission_impact_score"], impact["mission_impact_score"])
+        self.assertEqual(goal_score["reward_algorithm"], "goal_reward_blended_with_mission_impact_v1")
+        self.assertEqual(score.goal_reward, goal_score["goal_reward"])
 
     def test_goal_reward_is_used_by_feedback_reward(self):
         high_goal = {

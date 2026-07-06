@@ -17,6 +17,12 @@ MIN_ESCALATION_THRESHOLD = 0.58
 MAX_ESCALATION_THRESHOLD = 0.86
 MIN_EFFECT_THRESHOLD = 0.54
 MAX_EFFECT_THRESHOLD = 0.86
+MEDIUM_MISSION_IMPACT_THRESHOLD = 0.45
+HIGH_MISSION_IMPACT_THRESHOLD = 0.75
+MISSION_IMPACT_EMA_ALPHA = 0.35
+MAX_IMPACT_SENSITIVITY_BONUS = 0.04
+MAX_IMPACT_THRESHOLD_BONUS = 0.02
+META_GOAL_EFFECTS = {"EFFECT_DETECTION_BOUNDARY_PROBE"}
 
 
 def default_blue_policy_state() -> dict:
@@ -26,6 +32,8 @@ def default_blue_policy_state() -> dict:
         "escalation_threshold": {domain: LOW_CONFIDENCE_THRESHOLD for domain in DOMAINS},
         "effect_sensitivity": {effect: 1.0 for effect in EFFECT_TAGS},
         "effect_threshold": {effect: LOW_CONFIDENCE_THRESHOLD for effect in EFFECT_TAGS},
+        "effect_mission_impact_ema": {effect: 0.0 for effect in EFFECT_TAGS},
+        "effect_mission_impact_counts": {effect: 0 for effect in EFFECT_TAGS},
         "feedback_counts": {
             domain: {
                 "missed_attack": 0,
@@ -64,6 +72,14 @@ def normalize_blue_policy_state(policy_state: dict | None) -> dict:
             if effect in normalized[key]:
                 normalized[key][effect] = float(value)
 
+    for effect, value in policy_state.get("effect_mission_impact_ema", {}).items():
+        if effect in normalized["effect_mission_impact_ema"]:
+            normalized["effect_mission_impact_ema"][effect] = float(value)
+
+    for effect, value in policy_state.get("effect_mission_impact_counts", {}).items():
+        if effect in normalized["effect_mission_impact_counts"]:
+            normalized["effect_mission_impact_counts"][effect] = int(value)
+
     for domain, counts in policy_state.get("feedback_counts", {}).items():
         if domain not in normalized["feedback_counts"]:
             continue
@@ -90,6 +106,8 @@ def apply_blue_policy_state(state: dict, policy_state: dict | None) -> None:
     runtime["escalation_threshold"] = deepcopy(policy["escalation_threshold"])
     runtime["effect_sensitivity"] = deepcopy(policy["effect_sensitivity"])
     runtime["effect_threshold"] = deepcopy(policy["effect_threshold"])
+    runtime["effect_mission_impact_ema"] = deepcopy(policy["effect_mission_impact_ema"])
+    runtime["effect_mission_impact_counts"] = deepcopy(policy["effect_mission_impact_counts"])
     runtime["feedback_counts"] = deepcopy(policy["feedback_counts"])
     runtime["effect_feedback_counts"] = deepcopy(policy["effect_feedback_counts"])
 
@@ -103,6 +121,8 @@ def export_blue_policy_state(state: dict) -> dict:
             "escalation_threshold": runtime.get("escalation_threshold", {}),
             "effect_sensitivity": runtime.get("effect_sensitivity", {}),
             "effect_threshold": runtime.get("effect_threshold", {}),
+            "effect_mission_impact_ema": runtime.get("effect_mission_impact_ema", {}),
+            "effect_mission_impact_counts": runtime.get("effect_mission_impact_counts", {}),
             "feedback_counts": runtime.get("feedback_counts", {}),
             "effect_feedback_counts": runtime.get("effect_feedback_counts", {}),
         }
@@ -143,6 +163,7 @@ def apply_detection_policy(threats: list[Threat], policy_state: dict | None) -> 
             "escalation_threshold": deepcopy(policy["escalation_threshold"]),
             "effect_sensitivity": deepcopy(policy["effect_sensitivity"]),
             "effect_threshold": deepcopy(policy["effect_threshold"]),
+            "effect_mission_impact_ema": deepcopy(policy["effect_mission_impact_ema"]),
         },
     )
 
@@ -170,15 +191,32 @@ def update_blue_policy(
     counts = policy["feedback_counts"][domain]
     action_cost = round(sum(action.availability_cost for action in actions), 4)
     threat_seen = any(threat.target == domain for threat in threats)
-    goal_effect_id = _score_effect_id(score)
+    scorer_goal_effect_id = _score_effect_id(score)
     seen_effect_ids = set(_threat_effect_ids(threats))
+    mission_impact_feedback = _mission_impact_feedback(score, scorer_goal_effect_id)
+    goal_effect_id, training_effect_reason = _training_effect_id_for_feedback(
+        scorer_goal_effect_id,
+        mission_impact_feedback,
+        seen_effect_ids,
+    )
     effect_seen = goal_effect_id in seen_effect_ids if goal_effect_id else False
+    mission_impact_feedback["training_effect_id"] = goal_effect_id
+    mission_impact_feedback["training_effect_reason"] = training_effect_reason
+    impact_score = mission_impact_feedback["mission_impact_score"]
+    impact_sensitivity_bonus = _impact_scaled_bonus(impact_score, MAX_IMPACT_SENSITIVITY_BONUS)
+    impact_threshold_bonus = _impact_scaled_bonus(impact_score, MAX_IMPACT_THRESHOLD_BONUS)
     reason = "stable_detection"
     effect_reason = None
 
     if score.attack_success and not score.detection_success:
         counts["missed_attack"] += 1
-        _adjust(policy, domain, trust_delta=-0.08, sensitivity_delta=0.06, threshold_delta=-0.03)
+        _adjust(
+            policy,
+            domain,
+            trust_delta=-0.08,
+            sensitivity_delta=0.06 + impact_sensitivity_bonus * 0.5,
+            threshold_delta=-0.03 - impact_threshold_bonus * 0.5,
+        )
         reason = "missed_attack_raise_sensitivity"
     elif score.false_positive:
         counts["false_positive"] += 1
@@ -192,20 +230,34 @@ def update_blue_policy(
         reason = "detected_reinforce_domain"
 
     if goal_effect_id:
+        _record_effect_mission_impact(policy, goal_effect_id, impact_score)
+        mission_impact_feedback["effect_mission_impact_ema_after"] = policy["effect_mission_impact_ema"][
+            goal_effect_id
+        ]
+        mission_impact_feedback["effect_mission_impact_count_after"] = policy["effect_mission_impact_counts"][
+            goal_effect_id
+        ]
         effect_counts = policy["effect_feedback_counts"][goal_effect_id]
         if score.goal_success and not effect_seen:
             effect_counts["missed_effect"] += 1
-            _adjust_effect(policy, goal_effect_id, sensitivity_delta=0.08, threshold_delta=-0.04)
-            effect_reason = "missed_goal_effect_raise_sensitivity"
-        elif score.goal_success and effect_seen:
-            effect_counts["detected_effect"] += 1
             _adjust_effect(
                 policy,
                 goal_effect_id,
-                sensitivity_delta=0.01 if score.recovery_success else 0.03,
-                threshold_delta=0.0,
+                sensitivity_delta=0.08 + impact_sensitivity_bonus,
+                threshold_delta=-0.04 - impact_threshold_bonus,
             )
-            effect_reason = "detected_goal_effect_reinforce"
+            effect_reason = _impact_reason("missed_goal_effect_raise_sensitivity", impact_score)
+        elif score.goal_success and effect_seen:
+            effect_counts["detected_effect"] += 1
+            reinforce_sensitivity = 0.01 if score.recovery_success else 0.03
+            reinforce_threshold = 0.0 if score.recovery_success else -impact_threshold_bonus * 0.5
+            _adjust_effect(
+                policy,
+                goal_effect_id,
+                sensitivity_delta=reinforce_sensitivity + impact_sensitivity_bonus * 0.35,
+                threshold_delta=reinforce_threshold,
+            )
+            effect_reason = _impact_reason("detected_goal_effect_reinforce", impact_score)
         elif (not score.goal_success) and effect_seen:
             effect_counts["false_positive_effect"] += 1
             _adjust_effect(policy, goal_effect_id, sensitivity_delta=-0.04, threshold_delta=0.03)
@@ -245,9 +297,12 @@ def update_blue_policy(
             "recovery_success": score.recovery_success,
             "goal_id": score.goal_id,
             "goal_success": score.goal_success,
+            "scorer_goal_effect_id": scorer_goal_effect_id,
             "goal_effect_id": goal_effect_id,
             "goal_effect_seen": effect_seen,
             "seen_effect_ids": sorted(seen_effect_ids),
+            "mission_impact_feedback": mission_impact_feedback,
+            "mission_impact_score": impact_score,
             "over_defense": action_cost >= 0.10,
             "action_cost": action_cost,
         },
@@ -265,6 +320,7 @@ def update_blue_policy(
             "policy_state": deepcopy(policy),
             "action_cost": action_cost,
             "effect_update_reason": effect_reason,
+            "mission_impact_feedback": mission_impact_feedback,
             "saturation_guard": saturation_guard,
             "score": score.to_dict(),
             "policy_update_review": review_log,
@@ -307,6 +363,93 @@ def _adjust_effect(
     policy["effect_threshold"][effect_id] += threshold_delta
 
 
+def _record_effect_mission_impact(policy: dict, effect_id: str, impact_score: float) -> None:
+    if effect_id not in policy["effect_mission_impact_ema"]:
+        return
+    current_count = int(policy["effect_mission_impact_counts"].get(effect_id, 0))
+    current_ema = float(policy["effect_mission_impact_ema"].get(effect_id, 0.0))
+    if current_count <= 0:
+        next_ema = impact_score
+    else:
+        next_ema = current_ema * (1.0 - MISSION_IMPACT_EMA_ALPHA) + impact_score * MISSION_IMPACT_EMA_ALPHA
+    policy["effect_mission_impact_counts"][effect_id] = current_count + 1
+    policy["effect_mission_impact_ema"][effect_id] = round(min(1.0, max(0.0, next_ema)), 4)
+
+
+def _mission_impact_feedback(score: Score, goal_effect_id: str | None) -> dict:
+    mission_impact = (score.evidence or {}).get("mission_impact", {})
+    impact_score = round(min(1.0, max(0.0, float(mission_impact.get("mission_impact_score", 0.0)))), 4)
+    primary_component = mission_impact.get("primary_component")
+    target_component = mission_impact.get("target_component")
+    component_effect_id = _effect_id_from_mission_component(target_component) or _effect_id_from_mission_component(
+        primary_component
+    )
+    return {
+        "mission_impact_score": impact_score,
+        "mission_impact_level": mission_impact.get("level") or _impact_level(impact_score),
+        "primary_component": primary_component,
+        "target_component": target_component,
+        "goal_effect_id": goal_effect_id,
+        "component_effect_id": component_effect_id,
+        "training_effect_id": goal_effect_id or component_effect_id,
+        "impact_sensitive_update": impact_score >= MEDIUM_MISSION_IMPACT_THRESHOLD,
+    }
+
+
+def _training_effect_id_for_feedback(
+    goal_effect_id: str | None,
+    mission_impact_feedback: dict,
+    seen_effect_ids: set[str],
+) -> tuple[str | None, str]:
+    if goal_effect_id not in META_GOAL_EFFECTS:
+        return goal_effect_id, "direct_goal_effect"
+
+    component_effect_id = mission_impact_feedback.get("component_effect_id")
+    if component_effect_id in EFFECT_TAGS:
+        return component_effect_id, "meta_goal_remapped_to_mission_component"
+
+    non_meta_seen = sorted(effect_id for effect_id in seen_effect_ids if effect_id not in META_GOAL_EFFECTS)
+    if non_meta_seen:
+        return non_meta_seen[0], "meta_goal_remapped_to_seen_effect"
+
+    return None, "meta_goal_effect_feedback_skipped"
+
+
+def _effect_id_from_mission_component(component: str | None) -> str | None:
+    if component == "telemetry_safety":
+        return "EFFECT_TELEMETRY_TRUST_EROSION"
+    if component == "mission_belief":
+        return "EFFECT_WRONG_TARGET_SELECTION"
+    if component == "command_freshness":
+        return "EFFECT_COMMAND_STALE_ACCEPTANCE"
+    return None
+
+
+def _impact_scaled_bonus(impact_score: float, max_bonus: float) -> float:
+    if impact_score < MEDIUM_MISSION_IMPACT_THRESHOLD:
+        return 0.0
+    scale = (impact_score - MEDIUM_MISSION_IMPACT_THRESHOLD) / (1.0 - MEDIUM_MISSION_IMPACT_THRESHOLD)
+    return round(max_bonus * min(1.0, max(0.0, scale)), 4)
+
+
+def _impact_reason(base_reason: str, impact_score: float) -> str:
+    if impact_score >= HIGH_MISSION_IMPACT_THRESHOLD:
+        return f"{base_reason}_high_mission_impact"
+    if impact_score >= MEDIUM_MISSION_IMPACT_THRESHOLD:
+        return f"{base_reason}_medium_mission_impact"
+    return base_reason
+
+
+def _impact_level(impact_score: float) -> str:
+    if impact_score >= HIGH_MISSION_IMPACT_THRESHOLD:
+        return "HIGH"
+    if impact_score >= MEDIUM_MISSION_IMPACT_THRESHOLD:
+        return "MEDIUM"
+    if impact_score > 0.0:
+        return "LOW"
+    return "MINIMAL"
+
+
 def _policy_tunables(policy: dict) -> dict:
     return {
         "domain_trust": deepcopy(policy["domain_trust"]),
@@ -343,6 +486,13 @@ def _clamp_policy(policy: dict) -> None:
         )
         policy["effect_threshold"][effect_id] = round(
             min(MAX_EFFECT_THRESHOLD, max(MIN_EFFECT_THRESHOLD, policy["effect_threshold"][effect_id])), 4
+        )
+        policy["effect_mission_impact_ema"][effect_id] = round(
+            min(1.0, max(0.0, policy["effect_mission_impact_ema"][effect_id])), 4
+        )
+        policy["effect_mission_impact_counts"][effect_id] = max(
+            0,
+            int(policy["effect_mission_impact_counts"][effect_id]),
         )
 
 

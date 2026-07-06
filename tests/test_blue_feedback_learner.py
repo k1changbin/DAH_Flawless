@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 
 from dah_flawless.blue.feedback_learner import (
     MIN_DOMAIN_TRUST,
@@ -107,6 +108,75 @@ class BlueFeedbackLearnerTests(unittest.TestCase):
         )
         self.assertEqual(log["after"]["effect_update_reason"], "missed_goal_effect_raise_sensitivity")
 
+    def test_high_mission_impact_amplifies_missed_effect_update(self):
+        policy = default_blue_policy_state()
+        high_score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.90,
+            target_domain="command",
+            goal_id="ACK_CAUSAL_CONFUSION",
+            goal_success=True,
+            goal_reward=0.82,
+            evidence={
+                "goal_score": {"goal_id": "ACK_CAUSAL_CONFUSION"},
+                "mission_impact": {
+                    "mission_impact_score": 0.90,
+                    "level": "HIGH",
+                    "primary_component": "command_freshness",
+                    "target_component": "command_freshness",
+                },
+            },
+        )
+        low_score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.90,
+            target_domain="command",
+            goal_id="ACK_CAUSAL_CONFUSION",
+            goal_success=True,
+            goal_reward=0.60,
+            evidence={
+                "goal_score": {"goal_id": "ACK_CAUSAL_CONFUSION"},
+                "mission_impact": {
+                    "mission_impact_score": 0.10,
+                    "level": "LOW",
+                    "primary_component": "command_freshness",
+                    "target_component": "command_freshness",
+                },
+            },
+        )
+        threats = [Threat("command", 0.80, ("REPLAY_SUSPECTED",), ("generic command anomaly",))]
+
+        high_updated, high_log = update_blue_policy(deepcopy(policy), high_score, threats, [])
+        low_updated, _ = update_blue_policy(deepcopy(policy), low_score, threats, [])
+
+        effect_id = "EFFECT_ACK_CAUSAL_CONFUSION"
+        self.assertGreater(
+            high_updated["effect_sensitivity"][effect_id],
+            low_updated["effect_sensitivity"][effect_id],
+        )
+        self.assertLess(
+            high_updated["effect_threshold"][effect_id],
+            low_updated["effect_threshold"][effect_id],
+        )
+        self.assertEqual(high_updated["effect_mission_impact_counts"][effect_id], 1)
+        self.assertEqual(high_updated["effect_mission_impact_ema"][effect_id], 0.90)
+        self.assertEqual(
+            high_log["after"]["effect_update_reason"],
+            "missed_goal_effect_raise_sensitivity_high_mission_impact",
+        )
+        self.assertEqual(
+            high_log["after"]["mission_impact_feedback"]["training_effect_id"],
+            effect_id,
+        )
+
     def test_false_positive_goal_effect_reduces_effect_sensitivity(self):
         policy = default_blue_policy_state()
         score = Score(
@@ -144,6 +214,102 @@ class BlueFeedbackLearnerTests(unittest.TestCase):
         self.assertEqual(
             updated["effect_feedback_counts"]["EFFECT_CHANNEL_STATE_SUPPRESSION"]["false_positive_effect"],
             1,
+        )
+
+    def test_detected_high_mission_impact_reinforces_effect_threshold(self):
+        policy = default_blue_policy_state()
+        effect_id = "EFFECT_TELEMETRY_TRUST_EROSION"
+        score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.88,
+            target_domain="telemetry",
+            goal_id="TELEMETRY_TRUST_EROSION",
+            goal_success=True,
+            goal_reward=0.84,
+            evidence={
+                "goal_score": {"goal_id": "TELEMETRY_TRUST_EROSION"},
+                "mission_impact": {
+                    "mission_impact_score": 0.86,
+                    "level": "HIGH",
+                    "primary_component": "telemetry_safety",
+                    "target_component": "telemetry_safety",
+                },
+            },
+        )
+        threats = [
+            Threat(
+                "telemetry",
+                0.80,
+                ("EFFECT_TELEMETRY_TRUST_EROSION", "INTERNAL_EXTERNAL_TELEMETRY_DISAGREE"),
+                ("battery mismatch",),
+            )
+        ]
+
+        updated, log = update_blue_policy(policy, score, threats, [])
+
+        self.assertGreater(updated["effect_sensitivity"][effect_id], policy["effect_sensitivity"][effect_id])
+        self.assertLess(updated["effect_threshold"][effect_id], policy["effect_threshold"][effect_id])
+        self.assertEqual(updated["effect_mission_impact_counts"][effect_id], 1)
+        self.assertEqual(log["after"]["mission_impact_feedback"]["mission_impact_level"], "HIGH")
+        self.assertEqual(log["after"]["effect_update_reason"], "detected_goal_effect_reinforce_high_mission_impact")
+
+    def test_detection_boundary_probe_feedback_maps_to_underlying_effect(self):
+        policy = default_blue_policy_state()
+        score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.91,
+            target_domain="telemetry",
+            goal_id="DETECTION_BOUNDARY_PROBE",
+            goal_success=True,
+            goal_reward=0.80,
+            evidence={
+                "goal_score": {"goal_id": "DETECTION_BOUNDARY_PROBE"},
+                "mission_impact": {
+                    "mission_impact_score": 0.88,
+                    "level": "HIGH",
+                    "primary_component": "telemetry_safety",
+                    "target_component": "telemetry_safety",
+                },
+            },
+        )
+        threats = [
+            Threat(
+                "telemetry",
+                0.80,
+                ("EFFECT_TELEMETRY_TRUST_EROSION", "INTERNAL_EXTERNAL_TELEMETRY_DISAGREE"),
+                ("battery mismatch",),
+            )
+        ]
+
+        updated, log = update_blue_policy(policy, score, threats, [])
+
+        self.assertEqual(
+            updated["effect_feedback_counts"]["EFFECT_DETECTION_BOUNDARY_PROBE"]["missed_effect"],
+            0,
+        )
+        self.assertEqual(
+            updated["effect_mission_impact_counts"]["EFFECT_DETECTION_BOUNDARY_PROBE"],
+            0,
+        )
+        self.assertEqual(
+            updated["effect_feedback_counts"]["EFFECT_TELEMETRY_TRUST_EROSION"]["detected_effect"],
+            1,
+        )
+        self.assertEqual(
+            log["after"]["mission_impact_feedback"]["training_effect_id"],
+            "EFFECT_TELEMETRY_TRUST_EROSION",
+        )
+        self.assertEqual(
+            log["after"]["mission_impact_feedback"]["training_effect_reason"],
+            "meta_goal_remapped_to_mission_component",
         )
 
     def test_costly_defense_adds_over_defense_count(self):

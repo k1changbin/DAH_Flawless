@@ -31,18 +31,21 @@ raw_world
 - Blue는 raw_world와 scorer_truth/state["world"]를 볼 수 없다.
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Goal Consistency Checker는 scorer의 `red_goal`을 보지 않고 observed/internal/history/tags만으로 cyber-effect hypothesis를 만든다.
-- Blue Feedback Learner는 scorer feedback으로 domain policy와 effect policy(`effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`)를 업데이트한다.
+- Blue Feedback Learner는 scorer feedback으로 domain policy와 effect policy(`effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`)를 업데이트한다. 또한 scorer의 mission-impact를 effect별 EMA로 기록하고, 고영향 effect를 놓치거나 탐지 후 복구하지 못하면 해당 effect 민감도/threshold 보정을 더 강하게 적용한다.
+- `DETECTION_BOUNDARY_PROBE`는 학습용 meta goal이다. Blue Feedback Learner는 이를 독립 effect로 누적하지 않고 mission-impact component나 실제 감지된 하위 `EFFECT_*`로 remap해 detector가 허상 목표에 과적합되지 않게 한다.
+- `HOLD_COMMAND` 복구는 stale last-known-good보다 현재 `internal_observe.c2_message`를 우선한다. 내부 C2 anchor가 없을 때만 last-known-good/history로 fallback한다.
 - Goal Planner는 이전 로그와 현재 observed context를 함께 보고 Red의 cyber-effect 목표를 고른다. 최근 목표/domain 반복에는 diversity penalty를 주고, 덜 시도한 목표에는 작은 보너스를 준다.
 - Attack-Effect Contract는 공격 후보와 지원 goal/effect/evidence를 묶는다. Attack Selector는 contract alignment를 점수에 반영하고, Goal-aware Scorer는 unsupported attack-goal pair를 low-reward 실패로 clamp한다.
-- Attack Selector는 contract-compatible repeat guard와 tactic exploration rate로 같은 tactic 반복을 줄인다.
-- Goal-aware Scorer는 기존 `attack_success`와 별도로 `goal_success`, `goal_reward`, `score.evidence.goal_score`를 기록한다.
+- Attack Selector는 attack-level diversity penalty, contract-compatible repeat guard, tactic exploration rate로 같은 attack/tactic 반복을 줄인다.
+- Goal-aware Scorer는 기존 `attack_success`와 별도로 `goal_success`, `goal_reward`, `score.evidence.goal_score`를 기록한다. Mission-impact scorer는 임무판단/안전/명령 freshness/가용성 영향을 별도 evidence로 남기고, contract-supported goal reward에만 제한적으로 섞는다.
 - Causal Consistency Monitor는 attack -> mutation -> tag/effect -> scorer evidence 체인을 검사하고, summary에 causal/entropy metrics를 남긴다.
 - Blue policy saturation guard는 domain trust가 0으로 붕괴하지 않도록 floor를 적용한다.
 - Policy Update Reviewer는 Red/Blue policy delta를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - Mutation Approval Reviewer는 Red observe mutation 후보를 심사한다. 외부 OpenAI-compatible LLM reviewer는 선택사항이며, 연결 실패/잘못된 JSON/검증 실패 시 오프라인 heuristic reviewer로 즉시 fallback한다.
 - `src/dah_flawless/llm/`의 LLM Adapter가 역할별 외부 JSON 호출, schema 검증, 순수 코드 fallback을 공통 처리한다.
 - 학습 cadence는 Blue-only 10 episodes -> Red-only 10 episodes -> fixed evaluation 3 episodes를 기본값으로 두며, `TrainingScheduler`로 구현되어 있다.
-- Holdout 평가는 학습이 끝난 Red/Blue policy를 frozen 상태로 복사한 뒤 별도 seed/scenario grid에서 돌린다. 이때 MVP coverage용 scripted attack은 꺼서 정책 자체의 일반화 성능을 본다.
+- Holdout 평가는 학습이 끝난 Red/Blue policy를 frozen 상태로 복사한 뒤 별도 seed/scenario grid에서 돌린다. 이때 MVP coverage용 scripted attack은 꺼서 정책 자체의 일반화 성능을 본다. policy update는 계속 frozen으로 유지하지만, 이전 holdout case 로그를 selector context로 넘겨 cross-case attack diversity penalty가 작동하게 한다.
+- Rolling Log Memory는 긴 round-mode run에서 Red planning context가 원 로그 전체에 과적합되지 않도록 일정 라운드마다 로그를 압축해 proxy logs로 바꾼다. 출력 JSONL audit log는 유지하고, `previous_logs` 입력만 `proxy_logs + recent_logs`로 줄인다.
 - Scenario Pack은 `clean_start`, `degraded_start`, `satcom_delay`, `gnss_degraded`, `c2_metadata_noisy`, `telemetry_conflict`, `low_trust_start`를 제공한다. 기본 holdout은 전체 scenario pack을 사용한다.
 - Report Generator는 training/holdout summary와 optional JSONL logs를 읽어 보고서용 Markdown/JSON을 만든다. `main.py --report-out` 또는 `scripts/generate_training_report.py`로 실행한다.
 
@@ -79,13 +82,15 @@ raw_world
 | `src/dah_flawless/policy_review/` | bounded policy update reviewer and external-LLM fallback |
 | `src/dah_flawless/environment/episode_runner.py` | 30-step episode runner |
 | `src/dah_flawless/environment/training_scheduler.py` | alternating Blue/Red update scheduler |
-| `src/dah_flawless/environment/holdout_evaluator.py` | frozen-policy seed/scenario holdout evaluator |
+| `src/dah_flawless/environment/log_memory.py` | round-mode rolling log memory compression and proxy context |
+| `src/dah_flawless/environment/holdout_evaluator.py` | frozen-policy seed/scenario holdout evaluator, cross-case diversity context |
 | `docs/scenario_pack.md` | scenario pack 목적과 초기 조건 |
 | `src/dah_flawless/reporting/report_generator.py` | training/holdout report generator |
 | `docs/report_generator.md` | report generator 사용법 |
 | `src/dah_flawless/blue/` | Blue detection/mission/defense/report agents |
 | `src/dah_flawless/scoring/scorer.py` | scorer 판정 |
 | `src/dah_flawless/scoring/goal_scorer.py` | Red cyber-effect 목표별 goal_success/goal_reward 판정 |
+| `src/dah_flawless/scoring/mission_impact.py` | observe 오염이 임무 판단/안전/명령 freshness/가용성에 준 영향을 점수화 |
 | `src/dah_flawless/scoring/causal_consistency.py` | causal chain consistency monitor |
 
 ## 실행

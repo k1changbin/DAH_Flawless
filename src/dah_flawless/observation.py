@@ -104,6 +104,13 @@ def refresh_internal_observe_from_truth(state: dict[str, Any]) -> None:
         "heading_deg": truth["uav"].get("heading_deg"),
         "altitude_m": truth["uav"].get("position", {}).get("altitude_m"),
     }
+    internal["c2_message"] = {
+        "sequence_number": truth["command"]["expected_sequence_number"],
+        "command": truth["command"]["last_valid_command"],
+        "received_timestamp": truth["time"]["true_timestamp"],
+        "source": "internal_observe",
+        "red_direct_mutation_allowed": False,
+    }
     internal["health"] = {
         "source": "internal_observe",
         "red_direct_mutation_allowed": False,

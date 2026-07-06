@@ -155,17 +155,28 @@ TACTIC_TAG_MULTIPLIERS: dict[tuple[str, str], float] = {
     ("replay", "REPLAY_WINDOW_OPEN"): 1.4,
 }
 
+ATTACK_DIVERSITY_WINDOW = 8
+ATTACK_REPEAT_PENALTY_PER_USE = 0.12
+ATTACK_CONSECUTIVE_PENALTY_PER_USE = 0.16
+ATTACK_UNDERUSED_BONUS_PER_COUNT = 0.10
+MAX_ATTACK_DIVERSITY_PENALTY = 0.78
+MAX_ATTACK_UNDERUSED_BONUS = 0.35
+
 
 def score_attack_candidates(
     attacks: list[Attack],
     learned_weights: dict[str, float],
     tag_details: list[SituationTag] | None,
     goal_plan: dict[str, Any] | None = None,
+    previous_logs: list[dict] | None = None,
 ) -> list[dict[str, Any]]:
     tag_confidence = _tag_confidence(tag_details)
     candidates = []
     preferred_attacks = set((goal_plan or {}).get("preferred_attacks", []))
     goal_target_domain = (goal_plan or {}).get("target_domain")
+    recent_counts = _recent_attack_counts(previous_logs or [], window=ATTACK_DIVERSITY_WINDOW)
+    total_counts = _total_attack_counts(previous_logs or [])
+    mean_count = sum(total_counts.values()) / max(1, len(attacks))
 
     for attack in attacks:
         matched_tags = sorted(set(attack.preferred_tags).intersection(tag_confidence))
@@ -180,12 +191,19 @@ def score_attack_candidates(
         if (goal_plan or {}).get("goal_id") and not contract_alignment["supported_goal"]:
             score = 0.0
         else:
-            score = round(
+            base_score = (
                 learned_weights.get(attack.name, attack.weight)
                 * (1.0 + min(2.5, 0.7 * matched_strength) + goal_bonus)
-                * contract_multiplier,
+                * contract_multiplier
+            )
+            repeat_penalty = _attack_diversity_penalty(attack.name, previous_logs or [], recent_counts)
+            underused_bonus = _attack_underused_bonus(total_counts.get(attack.name, 0), mean_count)
+            score = round(
+                max(0.0, base_score * max(0.0, 1.0 - repeat_penalty) + underused_bonus),
                 3,
             )
+        repeat_penalty = _attack_diversity_penalty(attack.name, previous_logs or [], recent_counts)
+        underused_bonus = _attack_underused_bonus(total_counts.get(attack.name, 0), mean_count)
         candidates.append(
             {
                 "attack": attack.name,
@@ -197,6 +215,10 @@ def score_attack_candidates(
                 "contract_multiplier": contract_multiplier,
                 "contract_alignment": contract_alignment,
                 "goal_id": (goal_plan or {}).get("goal_id"),
+                "attack_repeat_penalty": round(repeat_penalty, 4),
+                "attack_underused_bonus": round(underused_bonus, 4),
+                "recent_attack_count": recent_counts.get(attack.name, 0),
+                "consecutive_attack_count": _consecutive_attack_count(previous_logs or [], attack.name),
             }
         )
 
@@ -332,6 +354,58 @@ def score_tactic_candidates(
 
 def _tag_confidence(tag_details: list[SituationTag] | None) -> dict[str, float]:
     return {detail.tag: detail.confidence for detail in tag_details or []}
+
+
+def _recent_attack_counts(previous_logs: list[dict], window: int) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry in previous_logs[-window:]:
+        attack_name = _attack_name_from_log(entry)
+        if attack_name:
+            counts[attack_name] = counts.get(attack_name, 0) + 1
+    return counts
+
+
+def _total_attack_counts(previous_logs: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry in previous_logs:
+        attack_name = _attack_name_from_log(entry)
+        if attack_name:
+            counts[attack_name] = counts.get(attack_name, 0) + 1
+    return counts
+
+
+def _attack_diversity_penalty(
+    attack_name: str,
+    previous_logs: list[dict],
+    recent_counts: dict[str, int],
+) -> float:
+    recent_count = recent_counts.get(attack_name, 0)
+    consecutive_count = _consecutive_attack_count(previous_logs, attack_name)
+    penalty = (
+        ATTACK_REPEAT_PENALTY_PER_USE * recent_count
+        + ATTACK_CONSECUTIVE_PENALTY_PER_USE * consecutive_count
+    )
+    return round(min(MAX_ATTACK_DIVERSITY_PENALTY, penalty), 4)
+
+
+def _attack_underused_bonus(count: int, mean_count: float) -> float:
+    if count >= mean_count:
+        return 0.0
+    return round(min(MAX_ATTACK_UNDERUSED_BONUS, (mean_count - count) * ATTACK_UNDERUSED_BONUS_PER_COUNT), 4)
+
+
+def _consecutive_attack_count(previous_logs: list[dict], attack_name: str) -> int:
+    count = 0
+    for entry in reversed(previous_logs):
+        if _attack_name_from_log(entry) != attack_name:
+            break
+        count += 1
+    return count
+
+
+def _attack_name_from_log(entry: dict) -> str | None:
+    attack = entry.get("attack") or {}
+    return attack.get("name")
 
 
 def _profile_for_tactic(stealth: bool, mutation_profile: str) -> str:

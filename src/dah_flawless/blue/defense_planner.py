@@ -231,10 +231,10 @@ def _apply_single_action(state: dict, action: DefenseAction, history: dict) -> N
         fallback = _get_path(_trusted_restore_source(state, history), target)
         _set_path(state["blue_observed"], target, deepcopy(fallback))
     elif action.action == "HOLD_COMMAND":
-        source = _trusted_restore_source(state, history)
-        state["blue_observed"]["c2_message"]["command"] = source["c2_message"]["command"]
-        state["blue_observed"]["c2_message"]["sequence_number"] = source["c2_message"]["sequence_number"]
-        state["blue_observed"]["time"]["received_timestamp"] = source["time"]["received_timestamp"]
+        source = _trusted_command_source(state, history)
+        state["blue_observed"]["c2_message"]["command"] = source["command"]
+        state["blue_observed"]["c2_message"]["sequence_number"] = source["sequence_number"]
+        state["blue_observed"]["time"]["received_timestamp"] = source["received_timestamp"]
     elif action.action == "RESET_CHANNEL_TIMING":
         source = _trusted_restore_source(state, history)
         for key in (
@@ -253,6 +253,19 @@ def _apply_single_action(state: dict, action: DefenseAction, history: dict) -> N
 
 def _trusted_restore_source(state: dict, history: dict) -> dict:
     return state.get("last_known_good", history["last_observed"])
+
+
+def _trusted_command_source(state: dict, history: dict) -> dict:
+    internal_c2 = state.get("blue_observed", {}).get("internal_observe", {}).get("c2_message", {})
+    if {"command", "sequence_number", "received_timestamp"}.issubset(internal_c2):
+        return internal_c2
+
+    source = _trusted_restore_source(state, history)
+    return {
+        "command": source["c2_message"]["command"],
+        "sequence_number": source["c2_message"]["sequence_number"],
+        "received_timestamp": source["time"]["received_timestamp"],
+    }
 
 
 def _refresh_last_known_good(state: dict, threats: list[Threat] | None) -> None:

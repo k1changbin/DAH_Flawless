@@ -32,6 +32,7 @@ from dah_flawless.config import (
     SCRIPTED_ATTACKS,
 )
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
+from dah_flawless.environment.log_memory import compress_log_memory, memory_event_from_snapshot, write_memory_snapshot
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
 from dah_flawless.mutation_review import MutationApprovalReviewer, build_mutation_approval_reviewer
@@ -61,7 +62,14 @@ def run_simulation(
     policy_update_reviewer: PolicyUpdateReviewer | None = None,
     mutation_approval_reviewer: MutationApprovalReviewer | None = None,
     scripted_attacks: tuple[str, ...] = SCRIPTED_ATTACKS,
+    memory_compaction_interval: int = 0,
+    memory_proxy_size: int = 12,
+    memory_path: Path | None = None,
 ) -> tuple[list[dict], dict]:
+    if memory_compaction_interval < 0:
+        raise ValueError("memory_compaction_interval must be >= 0")
+    if memory_proxy_size < 1:
+        raise ValueError("memory_proxy_size must be >= 1")
     state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(seed, scenario)
     if blue_policy_state is not None:
         apply_blue_policy_state(state, blue_policy_state)
@@ -79,6 +87,21 @@ def run_simulation(
     )
     logs: list[dict] = []
     historical_logs = deepcopy(previous_logs or [])
+    memory_proxy_logs: list[dict] = []
+    active_context_logs: list[dict] = []
+    memory_snapshots: list[dict] = []
+    if memory_compaction_interval and historical_logs:
+        initial_memory = compress_log_memory(
+            historical_logs,
+            seed=seed,
+            compacted_at_step=0,
+            proxy_size=memory_proxy_size,
+        )
+        memory_proxy_logs = deepcopy(initial_memory["proxy_logs"])
+        memory_snapshots.append(memory_event_from_snapshot(initial_memory, path=memory_path))
+        if memory_path is not None:
+            write_memory_snapshot(memory_path, initial_memory)
+        historical_logs = []
     threat_history: list[list] = []
     recovery_history: list[dict[str, bool]] = []
     prev_hash = GENESIS_HASH
@@ -93,7 +116,7 @@ def run_simulation(
             redacted_for_red,
             pre_attack_tags,
             pre_attack_tag_details,
-            previous_logs=historical_logs + logs,
+            previous_logs=historical_logs + memory_proxy_logs + active_context_logs,
         )
 
         attacked_state, mutation_log = apply_attack(
@@ -204,6 +227,7 @@ def run_simulation(
                 "attack_success": score.attack_success,
                 "goal_success": score.goal_success,
                 "goal_reward": score.goal_reward,
+                "mission_impact_score": score.evidence.get("mission_impact", {}).get("mission_impact_score"),
                 "causal_consistency_score": causal_consistency["consistency_score"],
                 "causal_consistency_status": causal_consistency["status"],
                 "detection_success": score.detection_success,
@@ -224,8 +248,29 @@ def run_simulation(
             "red_input_redacted": "world" not in redacted_for_red,
             "blue_input_redacted": "world" not in redacted_for_blue,
         }
+        should_compact_memory = (
+            memory_compaction_interval > 0
+            and len(active_context_logs) + 1 >= memory_compaction_interval
+        )
+        if should_compact_memory:
+            memory_source_logs = [*memory_proxy_logs, *active_context_logs, entry_without_hash]
+            memory_snapshot = compress_log_memory(
+                memory_source_logs,
+                seed=seed,
+                compacted_at_step=round_number,
+                proxy_size=memory_proxy_size,
+            )
+            memory_event = memory_event_from_snapshot(memory_snapshot, path=memory_path)
+            entry_without_hash["log_memory_event"] = memory_event
         entry = attach_hash(prev_hash, entry_without_hash)
         logs.append(entry)
+        active_context_logs.append(entry)
+        if should_compact_memory:
+            memory_proxy_logs = deepcopy(memory_snapshot["proxy_logs"])
+            active_context_logs = []
+            memory_snapshots.append(memory_event)
+            if memory_path is not None:
+                write_memory_snapshot(memory_path, memory_snapshot)
         prev_hash = entry["this_hash"]
         threat_history.append(threats)
         recovery_history.append(
@@ -246,6 +291,17 @@ def run_simulation(
     }
     summary["red_policy_state"] = red_agent.export_policy_state()
     summary["blue_policy_state"] = export_blue_policy_state(state)
+    if memory_compaction_interval:
+        summary["log_memory"] = {
+            "enabled": True,
+            "compaction_interval": memory_compaction_interval,
+            "proxy_size": memory_proxy_size,
+            "compaction_count": len(memory_snapshots),
+            "proxy_context_log_count": len(memory_proxy_logs),
+            "active_context_log_count": len(active_context_logs),
+            "memory_path": str(memory_path) if memory_path is not None else None,
+            "snapshots": memory_snapshots,
+        }
     if state["world"].get("raw_world_hash"):
         summary["raw_world_source_hash"] = state["world"]["raw_world_hash"]
     if log_path is not None:

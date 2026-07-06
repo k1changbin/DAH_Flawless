@@ -53,6 +53,8 @@ class AttackEffectContractTests(unittest.TestCase):
         goal_score = score.evidence["goal_score"]
         self.assertFalse(score.goal_success)
         self.assertFalse(goal_score["contract_alignment"]["supported_goal"])
+        self.assertEqual(goal_score["reward_algorithm"], "contract_violation_reward_clamp")
+        self.assertEqual(goal_score["mission_impact_reward_adjustment"], 0.0)
         self.assertLessEqual(score.goal_reward, 0.06)
 
     def test_simulation_logs_contract_alignment_for_goal_scores(self):

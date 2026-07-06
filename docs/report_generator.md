@@ -20,11 +20,11 @@ Report Generator는 training summary와 holdout summary를 보고서용 Markdown
 |---|---|
 | Executive Summary | 학습/holdout 성공률, 인과성, 다양성 요약 |
 | Training Overview | runner, episode, step, hash chain 상태 |
-| Training Metrics | detection, attack success, goal success, causal consistency, entropy |
+| Training Metrics | detection, attack success, goal success, mission impact, causal consistency, entropy |
 | Training Blocks | Blue-update, Red-update, fixed-eval block별 요약 |
 | Policy Delta | Red attack weight 변화, Blue domain trust/sensitivity/threshold 변화 |
 | Holdout Overview | holdout case, scenario 수, scripted coverage off 여부 |
-| Holdout Scenario Results | scenario/seed별 승패, goal success, causal consistency, availability |
+| Holdout Scenario Results | scenario/seed별 승패, goal success, mission impact, causal consistency, availability |
 | Generalization Flags | 낮은 다양성, 낮은 causal consistency, availability floor pressure 등 |
 
 시뮬레이션 실행과 동시에 생성:

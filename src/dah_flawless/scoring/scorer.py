@@ -14,6 +14,7 @@ from dah_flawless.config import (
     RECOVERY_WINDOW,
 )
 from dah_flawless.scoring.goal_scorer import score_red_goal
+from dah_flawless.scoring.mission_impact import assess_mission_impact, blend_goal_reward_with_mission_impact
 from dah_flawless.schemas import Attack, DefenseAction, Score, Threat
 
 
@@ -45,6 +46,14 @@ def score_round(
         detection_success=detection_success,
         recovery_success=recovery_success,
     )
+    mission_impact = assess_mission_impact(
+        pre_defense_state=pre_defense_state,
+        post_defense_state=post_defense_state,
+        attack=attack,
+        red_goal=red_goal,
+        actions=actions,
+    )
+    goal_score = blend_goal_reward_with_mission_impact(goal_score, mission_impact)
 
     if attack_success and not detection_success:
         winner = "RED_BREACH"
@@ -63,6 +72,7 @@ def score_round(
     evidence["detection_window"] = DETECTION_WINDOW
     evidence["recovery_window"] = RECOVERY_WINDOW
     evidence["current_recovery_success"] = current_recovery_success
+    evidence["mission_impact"] = mission_impact
     evidence["goal_score"] = goal_score
     return Score(
         winner=winner,

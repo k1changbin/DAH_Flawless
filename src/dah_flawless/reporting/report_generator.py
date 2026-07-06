@@ -90,7 +90,15 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "",
             _rows_table(
                 training["block_rows"],
-                ("block", "episodes", "steps", "winner_top", "goal_success_rate", "avg_causal_consistency"),
+                (
+                    "block",
+                    "episodes",
+                    "steps",
+                    "winner_top",
+                    "goal_success_rate",
+                    "avg_mission_impact_score",
+                    "avg_causal_consistency",
+                ),
             ),
             "",
             "## Policy Delta",
@@ -130,6 +138,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                         "steps",
                         "winner_top",
                         "goal_success_rate",
+                        "avg_mission_impact_score",
                         "avg_causal_consistency",
                         "min_availability",
                     ),
@@ -199,6 +208,8 @@ def _metrics(summary: dict) -> dict[str, Any]:
         "attack_success_rate",
         "goal_success_rate",
         "avg_goal_reward",
+        "avg_mission_impact_score",
+        "high_mission_impact_count",
         "attack_entropy",
         "tactic_entropy",
         "avg_causal_consistency",
@@ -224,6 +235,7 @@ def _block_rows(summary: dict) -> list[dict[str, Any]]:
                 "steps": block.get("rounds"),
                 "winner_top": _top_item(block.get("winners", {})),
                 "goal_success_rate": block.get("goal_success_rate"),
+                "avg_mission_impact_score": block.get("avg_mission_impact_score"),
                 "avg_causal_consistency": block.get("avg_causal_consistency"),
                 "attack_entropy": block.get("attack_entropy"),
                 "tactic_entropy": block.get("tactic_entropy"),
@@ -244,6 +256,7 @@ def _scenario_rows(summary: dict) -> list[dict[str, Any]]:
                 "attack_top": _top_item(case.get("attacks", {})),
                 "goal_top": _top_item(case.get("goals", {})),
                 "goal_success_rate": case.get("goal_success_rate"),
+                "avg_mission_impact_score": case.get("avg_mission_impact_score"),
                 "avg_causal_consistency": case.get("avg_causal_consistency"),
                 "min_availability": case.get("min_availability"),
                 "scenario_emphasis": ",".join(case.get("scenario_profile", {}).get("emphasis", [])),
@@ -329,6 +342,12 @@ def _comparison(training: dict, holdout: dict | None) -> dict[str, Any]:
         "causal_consistency_delta": _round(
             _delta(training_metrics.get("avg_causal_consistency"), holdout_metrics.get("avg_causal_consistency"))
         ),
+        "mission_impact_delta": _round(
+            _delta(
+                training_metrics.get("avg_mission_impact_score"),
+                holdout_metrics.get("avg_mission_impact_score"),
+            )
+        ),
         "attack_entropy_delta": _round(
             _delta(training_metrics.get("attack_entropy"), holdout_metrics.get("attack_entropy"))
         ),
@@ -362,6 +381,7 @@ def _takeaways(training: dict, holdout: dict | None) -> list[str]:
     items.append(
         "Training reached "
         f"goal_success_rate={_fmt(training_metrics.get('goal_success_rate'))}, "
+        f"avg_mission_impact={_fmt(training_metrics.get('avg_mission_impact_score'))}, "
         f"avg_causal_consistency={_fmt(training_metrics.get('avg_causal_consistency'))}."
     )
     items.append(
@@ -374,6 +394,7 @@ def _takeaways(training: dict, holdout: dict | None) -> list[str]:
         items.append(
             "Holdout reached "
             f"goal_success_rate={_fmt(holdout_metrics.get('goal_success_rate'))}, "
+            f"avg_mission_impact={_fmt(holdout_metrics.get('avg_mission_impact_score'))}, "
             f"avg_causal_consistency={_fmt(holdout_metrics.get('avg_causal_consistency'))} "
             f"across {holdout['overview'].get('scenario_count', 0)} scenario types."
         )

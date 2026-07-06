@@ -72,6 +72,13 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "heading_deg": 91,
             "altitude_m": 180,
         },
+        "c2_message": {
+            "sequence_number": 1021,
+            "command": "RETURN_TO_BASE",
+            "received_timestamp": BASE_TIMESTAMP,
+            "source": "internal_observe",
+            "red_direct_mutation_allowed": False,
+        },
         "health": {
             "source": "internal_observe",
             "red_direct_mutation_allowed": False,
@@ -184,6 +191,8 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "escalation_threshold": deepcopy(blue_policy["escalation_threshold"]),
             "effect_sensitivity": deepcopy(blue_policy["effect_sensitivity"]),
             "effect_threshold": deepcopy(blue_policy["effect_threshold"]),
+            "effect_mission_impact_ema": deepcopy(blue_policy["effect_mission_impact_ema"]),
+            "effect_mission_impact_counts": deepcopy(blue_policy["effect_mission_impact_counts"]),
             "feedback_counts": deepcopy(blue_policy["feedback_counts"]),
             "effect_feedback_counts": deepcopy(blue_policy["effect_feedback_counts"]),
         },

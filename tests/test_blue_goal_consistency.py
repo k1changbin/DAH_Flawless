@@ -6,7 +6,8 @@ from dah_flawless.blue.threat_detection import detect_threats
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
-from dah_flawless.schemas import Threat
+from dah_flawless.observation import refresh_internal_observe_from_truth
+from dah_flawless.schemas import DefenseAction, Threat
 
 
 class BlueGoalConsistencyTests(unittest.TestCase):
@@ -57,6 +58,34 @@ class BlueGoalConsistencyTests(unittest.TestCase):
         self.assertIn("RESET_CHANNEL_TIMING", [action.action for action in actions])
         self.assertEqual(defended["blue_observed"]["comms"]["heartbeat_gap_ms"], 0)
         self.assertEqual(defended["blue_observed"]["comms"]["packet_interval_jitter_ms"], 18)
+
+    def test_hold_command_restores_current_internal_c2_anchor(self):
+        state = create_baseline_state(seed=1)
+        history = make_history(state)
+        state["world"]["command"]["expected_sequence_number"] += 1
+        state["world"]["time"]["true_timestamp"] += 30
+        refresh_internal_observe_from_truth(state)
+        state["blue_observed"]["c2_message"]["sequence_number"] -= 5
+        state["blue_observed"]["c2_message"]["command"] = "CONTINUE_MISSION"
+        state["blue_observed"]["time"]["received_timestamp"] -= 120
+        actions = [
+            DefenseAction("HOLD_COMMAND", "blue_observed.c2_message.command", 3, 1, 0.04),
+        ]
+
+        defended = apply_defense_actions(state, actions, history, [], state["capabilities"])
+
+        self.assertEqual(
+            defended["blue_observed"]["c2_message"]["sequence_number"],
+            state["world"]["command"]["expected_sequence_number"],
+        )
+        self.assertEqual(
+            defended["blue_observed"]["c2_message"]["command"],
+            state["world"]["command"]["last_valid_command"],
+        )
+        self.assertEqual(
+            defended["blue_observed"]["time"]["received_timestamp"],
+            state["world"]["time"]["true_timestamp"],
+        )
 
     def test_effect_threshold_can_confirm_specific_defense(self):
         state = create_baseline_state(seed=1)

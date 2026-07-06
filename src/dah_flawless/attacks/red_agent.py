@@ -92,14 +92,24 @@ class RedAgent:
                     "tactic": tactic,
                     "goal_candidate_scores": goal_candidates,
                     "attack_candidate_scores": score_attack_candidates(
-                        realistic_attacks(), self._weights, tag_details, goal_plan=goal_plan
+                        realistic_attacks(),
+                        self._weights,
+                        tag_details,
+                        goal_plan=goal_plan,
+                        previous_logs=previous_logs or [],
                     ),
                 },
             )
             return attack, stealth, tactic, log
 
         goal_plan = goal_candidates[0]
-        attack_candidates = score_attack_candidates(realistic_attacks(), self._weights, tag_details, goal_plan=goal_plan)
+        attack_candidates = score_attack_candidates(
+            realistic_attacks(),
+            self._weights,
+            tag_details,
+            goal_plan=goal_plan,
+            previous_logs=previous_logs or [],
+        )
         attacks_by_name = {attack.name: attack for attack in realistic_attacks()}
         weighted = [(attacks_by_name[candidate["attack"]], max(candidate["score"], 0.0)) for candidate in attack_candidates]
 

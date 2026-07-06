@@ -35,19 +35,20 @@ raw_world -> Feature Extractor -> State Adapter
 | Situation Tagger | `src/dah_flawless/situation_tagger.py` | 통신/텔레메트리/임무 태그 구현 |
 | Goal Planner | `src/dah_flawless/attacks/goal_planner.py` | 이전 로그와 현재 context 기반 cyber-effect 목표 선택, 최근 목표/domain 반복 감점 diversity guard |
 | Attack-Effect Contract | `src/dah_flawless/attacks/effect_contracts.py`, `docs/attack_effect_contracts.md` | 공격 후보와 지원 goal/effect/evidence 정합성 기준 |
-| Attack Selector | `src/dah_flawless/attacks/selector.py` | 태그 기반 후보 점수화 |
+| Attack Selector | `src/dah_flawless/attacks/selector.py` | 태그/contract 기반 후보 점수화, 최근 공격 반복 감점 attack diversity penalty |
 | Mutation Engine | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed 변조 |
 | EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
 | TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
-| HoldoutEvaluator | `src/dah_flawless/environment/holdout_evaluator.py` | 학습 후 frozen Red/Blue policy를 별도 seed/scenario grid에서 평가 |
+| Rolling Log Memory | `src/dah_flawless/environment/log_memory.py` | 일정 라운드마다 Red planning context를 압축 proxy log로 교체해 장기 반복 편향 완화 |
+| HoldoutEvaluator | `src/dah_flawless/environment/holdout_evaluator.py` | 학습 후 frozen Red/Blue policy를 별도 seed/scenario grid에서 평가, cross-case diversity penalty 적용 |
 | Scenario Pack | `src/dah_flawless/environment/state_factory.py`, `docs/scenario_pack.md` | clean/degraded/SATCOM/GNSS/C2 metadata/telemetry/low-trust 초기 조건 |
 | Report Generator | `src/dah_flawless/reporting/report_generator.py`, `docs/report_generator.md` | training/holdout summary를 보고서용 Markdown/JSON으로 변환 |
-| Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain/effect trust, sensitivity, threshold 업데이트 |
+| Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain/effect trust, sensitivity, threshold 업데이트. effect별 mission-impact EMA, impact 기반 보정, boundary-probe meta goal remap 포함 |
 | Causal Consistency Monitor | `src/dah_flawless/scoring/causal_consistency.py` | attack -> mutation -> tag/effect -> scorer evidence 인과 체인 검사 |
 | Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
 | LLM Adapter | `src/dah_flawless/llm/` | 역할별 외부 LLM JSON 호출과 순수 코드 fallback 공통 계층 |
-| Blue Defense | `src/dah_flawless/blue/` | observed-only goal consistency, 탐지, 임무위험, 단계방어 |
-| Scorer | `src/dah_flawless/scoring/scorer.py`, `src/dah_flawless/scoring/goal_scorer.py` | 승패, goal-aware evidence, detection/recovery window |
+| Blue Defense | `src/dah_flawless/blue/` | observed-only goal consistency, 탐지, 임무위험, 단계방어. `HOLD_COMMAND`는 현재 internal C2 anchor를 우선 사용 |
+| Scorer | `src/dah_flawless/scoring/scorer.py`, `src/dah_flawless/scoring/goal_scorer.py`, `src/dah_flawless/scoring/mission_impact.py` | 승패, goal-aware evidence, mission-impact reward 보정, detection/recovery window |
 | Dashboard | `streamlit_app.py` | raw_world sample 입력, 로그 분석 |
 
 아직 구현하지 않은 것은 VAE 기반 world generator, 실제 RF/API adapter, 실제 네트워크 공격 실행입니다. 보고서에서는 “확장 가능 설계”로만 설명해야 합니다.
@@ -92,6 +93,14 @@ python -m dah_flawless.main --seed 42 --training-schedule --holdout-eval --repor
 python -m dah_flawless.main --seed 42 --rounds 5 --scenario satcom_delay
 ```
 
+장기 run에서 이전 로그 전체 대신 압축된 경향성 memory를 먹이려면:
+
+```powershell
+python -m dah_flawless.main --seed 42 --rounds 50 --memory-compaction-interval 20 --memory-proxy-size 12 --memory-out data/logs/rolling_memory.json
+```
+
+이 기능은 출력 JSONL 로그를 삭제하지 않는다. Red의 다음 선택에 들어가는 `previous_logs` context만 `proxy_logs + recent_logs`로 줄인다.
+
 큰 시연값을 명시적으로 쓰려면:
 
 ```powershell
@@ -122,7 +131,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `121 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware Scorer, Blue Goal Consistency Checker, Effect-aware Blue Feedback Learner, Attack Selector, tactic diversity guard, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `131 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -135,17 +144,19 @@ python -m unittest discover -s tests
 | `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
 | `red_policy_state` | Red 공격 weight/probe 상태 |
 | `red_goal` | Red Goal Planner가 선택한 cyber-effect 목표 |
-| `blue_policy_state` | Blue의 domain/effect sensitivity, threshold, trust, feedback count |
+| `blue_policy_state` | Blue의 domain/effect sensitivity, threshold, trust, feedback count, effect별 mission-impact EMA |
 | `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
 | `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |
-| `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약 |
+| `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약. mission-impact score 포함 |
 | `score.goal_success` | Red가 선택한 cyber-effect 목표 달성 여부 |
-| `score.goal_reward` | Red Goal Planner/Feedback Learner에 반영되는 목표별 reward |
+| `score.goal_reward` | Red Goal Planner/Feedback Learner에 반영되는 목표별 reward. contract-supported 목표는 mission-impact 보정 포함 |
 | `score.evidence.goal_score` | 목표별 판정 근거. 예: ACK gap, priority drift, channel suppression |
+| `score.evidence.mission_impact` | observe 오염이 임무 판단/안전/명령 freshness/가용성에 미친 영향 점수 |
 | `block`, `episode`, `global_step` | TrainingScheduler/EpisodeRunner 실행 단위 |
 | `scenario_profile` | Scenario Pack이 설정한 강조 조건과 설명 |
 | `holdout_case`, `holdout_seed`, `holdout_scenario` | HoldoutEvaluator 실행 단위와 일반화 평가 조건 |
 | `generalization_flags` | holdout summary에서 낮은 다양성, 낮은 goal success, causal failure 같은 경고 |
+| `log_memory_event` | rolling log memory가 실행된 라운드의 압축 요약과 proxy log 수 |
 | `score.evidence.trusted_value` | scorer_truth 기준값 |
 | `score.evidence.observed_value` | Blue가 받은 값 |
 | `red_situation_tag_details` | Red가 공격 선택 전에 본 상황 태그 근거 |
