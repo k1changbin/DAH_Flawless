@@ -66,7 +66,14 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "EFFECT_WRONG_TARGET_SELECTION",
             "EFFECT_DETECTION_BOUNDARY_PROBE",
         ),
-        success_evidence_keys=("max_priority_delta", "observed_top_area", "recommended_area"),
+        success_evidence_keys=(
+            "max_priority_delta",
+            "observed_top_area",
+            "recommended_area",
+            "action_cost",
+            "availability_drop",
+            "defense_action_count",
+        ),
         failure_modes=(
             "priority drift does not change top or recommended mission area",
             "Blue restores mission state from last-known-good data",
@@ -105,7 +112,14 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "EFFECT_TELEMETRY_TRUST_EROSION",
             "EFFECT_DETECTION_BOUNDARY_PROBE",
         ),
-        success_evidence_keys=("battery_delta", "motor_mismatch", "impossible_drain_hint"),
+        success_evidence_keys=(
+            "battery_delta",
+            "motor_mismatch",
+            "impossible_drain_hint",
+            "action_cost",
+            "availability_drop",
+            "defense_action_count",
+        ),
         failure_modes=(
             "external telemetry remains physically plausible",
             "internal observe and cross-check capability dominate Blue trust",
@@ -172,6 +186,9 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "heartbeat_gap_ms",
             "packet_loss",
             "latency_ms",
+            "action_cost",
+            "availability_drop",
+            "defense_action_count",
         ),
         failure_modes=(
             "monotonic sequence/timestamp checks reject stale metadata",

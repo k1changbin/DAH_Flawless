@@ -108,11 +108,39 @@ def assess_causal_consistency(
 
 def _changed_paths(mutation_log: dict) -> list[str]:
     paths = []
+    paths.extend(_path_list(mutation_log.get("changed_paths", [])))
+
     for item in mutation_log.get("policy_decisions", []):
         path = item.get("path")
         if path and item.get("approved", True):
             paths.append(path)
+        paths.extend(_path_list(item.get("changed_paths", [])))
+
+    for item in mutation_log.get("step_mutations", []):
+        paths.extend(_path_list(item.get("changed_paths", [])))
+
+    for step in mutation_log.get("combat_steps", []):
+        if not isinstance(step, dict):
+            continue
+        red_step = step.get("red_step", step)
+        if isinstance(red_step, dict):
+            paths.extend(_changed_paths(red_step))
     return sorted(set(paths))
+
+
+def _path_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, list):
+        return []
+    paths = []
+    for item in value:
+        if isinstance(item, str):
+            paths.append(item)
+        elif isinstance(item, dict) and isinstance(item.get("path"), str):
+            if item.get("approved", True):
+                paths.append(item["path"])
+    return paths
 
 
 def _matched_paths(changed_paths: list[str], expected_paths: tuple[str, ...]) -> list[str]:

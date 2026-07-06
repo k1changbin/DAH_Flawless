@@ -23,6 +23,10 @@ class RoundCombatRunnerTests(unittest.TestCase):
         self.assertIn("score", first)
         self.assertIn("red_step_action_counts", first)
         self.assertIn("blue_step_action_counts", first)
+        self.assertIn("combat_mutation_log", first)
+        self.assertTrue(first["combat_mutation_log"]["changed_paths"])
+        self.assertNotIn("no_contract_mutation_path_changed", first["causal_consistency"]["violations"])
+        self.assertEqual(summary["causal_failure_count"], 0)
 
         red_actions = {step["red_action"] for entry in logs for step in entry["combat_steps"]}
         blue_actions = {step["blue_action"] for entry in logs for step in entry["combat_steps"]}

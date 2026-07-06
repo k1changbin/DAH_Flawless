@@ -1,7 +1,11 @@
 import unittest
 
 from dah_flawless.attacks.catalog import get_attack, realistic_attacks
-from dah_flawless.attacks.effect_contracts import contract_supports_goal, score_contract_alignment
+from dah_flawless.attacks.effect_contracts import (
+    contract_supports_goal,
+    get_attack_effect_contract,
+    score_contract_alignment,
+)
 from dah_flawless.attacks.selector import score_attack_candidates
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.simulator import run_simulation
@@ -16,6 +20,14 @@ class AttackEffectContractTests(unittest.TestCase):
         self.assertTrue(contract_supports_goal("PRIORITY_POISONING", "WRONG_TARGET_SELECTION"))
         self.assertFalse(contract_supports_goal("PRIORITY_POISONING", "COMMAND_STALE_ACCEPTANCE"))
         self.assertFalse(contract_supports_goal("TELEMETRY_FDI", "WRONG_TARGET_SELECTION"))
+
+    def test_overdefense_attrition_contracts_include_defense_cost_evidence(self):
+        for attack_name in ("PRIORITY_POISONING", "TELEMETRY_FDI", "TIME_DESYNC_REPLAY"):
+            contract = get_attack_effect_contract(attack_name)
+            self.assertIn("BLUE_OVERDEFENSE_ATTRITION", contract.supported_goal_ids)
+            self.assertIn("action_cost", contract.success_evidence_keys)
+            self.assertIn("availability_drop", contract.success_evidence_keys)
+            self.assertIn("defense_action_count", contract.success_evidence_keys)
 
     def test_attack_selector_penalizes_contract_mismatch(self):
         state = create_baseline_state(seed=1)

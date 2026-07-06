@@ -54,10 +54,11 @@ def score_round(
         actions=actions,
     )
     goal_score = blend_goal_reward_with_mission_impact(goal_score, mission_impact)
+    attrition = _attrition_evidence(pre_defense_state, post_defense_state, actions, goal_score)
 
     if attack_success and not detection_success:
         winner = "RED_BREACH"
-    elif availability < AVAIL_FLOOR:
+    elif attrition["triggered"]:
         winner = "RED_ATTRITION"
     elif recovery_success and availability >= RECOVERY_TARGET:
         winner = "BLUE_RECOVERY"
@@ -74,6 +75,7 @@ def score_round(
     evidence["current_recovery_success"] = current_recovery_success
     evidence["mission_impact"] = mission_impact
     evidence["goal_score"] = goal_score
+    evidence["attrition"] = attrition
     return Score(
         winner=winner,
         attack_success=attack_success,
@@ -172,3 +174,54 @@ def _recovered_in_window(
         return True
     history_window = (recovery_history or [])[-max(0, RECOVERY_WINDOW - 1) :]
     return any(recovery.get(attack.target_domain, False) for recovery in history_window)
+
+
+def _attrition_evidence(
+    pre_defense_state: dict,
+    post_defense_state: dict,
+    actions: list[DefenseAction],
+    goal_score: dict,
+) -> dict:
+    pre_availability = float(pre_defense_state["mission"]["availability"])
+    post_availability = float(post_defense_state["mission"]["availability"])
+    availability_drop = max(0.0, pre_availability - post_availability)
+    action_cost = round(sum(float(action.availability_cost) for action in actions), 4)
+    high_cost_action_count = sum(1 for action in actions if float(action.availability_cost) >= 0.05)
+    combat_attrition = post_defense_state.get("defense_runtime", {}).get("combat_attrition", {})
+    round_defense_cost = float(combat_attrition.get("round_defense_cost", action_cost))
+    round_defense_steps = int(combat_attrition.get("defense_steps", 1 if actions else 0))
+    consecutive_defense_steps = int(combat_attrition.get("consecutive_defense_steps", 1 if actions else 0))
+
+    floor_breach = post_availability < AVAIL_FLOOR
+    already_below_floor = pre_availability < AVAIL_FLOOR
+    current_pressure = action_cost >= 0.10 or availability_drop >= 0.08 or high_cost_action_count >= 2
+    sustained_pressure = round_defense_steps >= 2 and round_defense_cost >= 0.16
+    consecutive_pressure = consecutive_defense_steps >= 2 and round_defense_cost >= 0.12
+    goal_pressure = (
+        goal_score.get("goal_id") == "BLUE_OVERDEFENSE_ATTRITION"
+        and bool(goal_score.get("goal_success"))
+        and (action_cost >= 0.07 or availability_drop >= 0.04 or sustained_pressure)
+    )
+    stale_floor_pressure = already_below_floor and availability_drop < 0.03 and action_cost < 0.07
+    triggered = floor_breach and not stale_floor_pressure and (
+        current_pressure or sustained_pressure or consecutive_pressure or goal_pressure
+    )
+
+    return {
+        "triggered": bool(triggered),
+        "floor_breach": floor_breach,
+        "already_below_floor": already_below_floor,
+        "availability_before": round(pre_availability, 4),
+        "availability_after": round(post_availability, 4),
+        "availability_drop": round(availability_drop, 4),
+        "action_cost": action_cost,
+        "defense_action_count": len(actions),
+        "high_cost_action_count": high_cost_action_count,
+        "round_defense_cost": round(round_defense_cost, 4),
+        "round_defense_steps": round_defense_steps,
+        "consecutive_defense_steps": consecutive_defense_steps,
+        "current_pressure": current_pressure,
+        "sustained_pressure": sustained_pressure,
+        "goal_pressure": goal_pressure,
+        "stale_floor_pressure": stale_floor_pressure,
+    }

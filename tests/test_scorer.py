@@ -3,6 +3,7 @@ import unittest
 from dah_flawless.attacks.catalog import get_attack
 from dah_flawless.environment.state_factory import create_baseline_state
 from dah_flawless.scoring.scorer import score_round
+from dah_flawless.schemas import DefenseAction
 
 
 class ScorerTests(unittest.TestCase):
@@ -20,7 +21,7 @@ class ScorerTests(unittest.TestCase):
         self.assertFalse(score.detection_success)
         self.assertEqual(score.winner, "RED_BREACH")
 
-    def test_attrition_overrides_detected_defense(self):
+    def test_attrition_requires_fresh_defense_pressure(self):
         attack = get_attack("PRIORITY_POISONING")
         pre = create_baseline_state(seed=1)
         post = create_baseline_state(seed=1)
@@ -32,9 +33,32 @@ class ScorerTests(unittest.TestCase):
             target = "mission"
             confidence = 0.9
 
-        score = score_round(pre, post, attack, threats=[FakeThreat()], actions=[])
+        actions = [
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.mission.area_priority", 3, 1, 0.05),
+            DefenseAction("REQUEST_REVALIDATION", "blue_observed.mission", 1, 1, 0.05),
+        ]
+        score = score_round(pre, post, attack, threats=[FakeThreat()], actions=actions)
 
         self.assertEqual(score.winner, "RED_ATTRITION")
+        self.assertTrue(score.evidence["attrition"]["triggered"])
+
+    def test_low_availability_without_new_pressure_does_not_force_attrition(self):
+        attack = get_attack("PRIORITY_POISONING")
+        pre = create_baseline_state(seed=1)
+        post = create_baseline_state(seed=1)
+        pre["blue_observed"]["mission"]["area_priority"] = {"A": 0.2, "B": 0.4, "C": 0.95}
+        pre["mission"]["availability"] = 0.42
+        post["mission"]["availability"] = 0.41
+
+        class FakeThreat:
+            target = "mission"
+            confidence = 0.9
+
+        score = score_round(pre, post, attack, threats=[FakeThreat()], actions=[])
+
+        self.assertEqual(score.winner, "DRAW")
+        self.assertFalse(score.evidence["attrition"]["triggered"])
+        self.assertTrue(score.evidence["attrition"]["stale_floor_pressure"])
 
     def test_detection_window_uses_recent_threat_history(self):
         attack = get_attack("TELEMETRY_FDI")

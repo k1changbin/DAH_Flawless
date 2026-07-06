@@ -82,6 +82,14 @@ class CombatStepMemory:
     red_budget: float = 1.0
     blue_compute_budget: float = 1.0
     blue_power_budget: float = 1.0
+    retry_attempts: int = 0
+    finalize_attempts: int = 0
+    low_budget_waits: int = 0
+    recovery_streak: int = 0
+    blue_defense_cost_total: float = 0.0
+    blue_defense_steps: int = 0
+    blue_consecutive_defense_steps: int = 0
+    blue_defense_action_count: int = 0
     red_action_counts: dict[str, int] = field(default_factory=dict)
     blue_action_counts: dict[str, int] = field(default_factory=dict)
 
@@ -234,6 +242,8 @@ class RoundCombatRunner:
         recovery_history: list[dict[str, bool]] = []
         cumulative_actions: list[DefenseAction] = []
         step_logs: list[dict] = []
+        episode_situation_tags: set[str] = set()
+        episode_recognized_threats: list[Threat] = []
         final_score: Score | None = None
         final_report: dict | None = None
         final_causal: dict | None = None
@@ -275,6 +285,8 @@ class RoundCombatRunner:
             )
             combat_memory.count_blue(blue_action)
             recognized_threats = _recognized_threats_for_action(blue_action, candidate_threats)
+            episode_situation_tags.update(candidate_tags)
+            episode_recognized_threats.extend(recognized_threats)
             risks, risk_log = estimate_mission_risk(redacted_for_blue, recognized_threats)
             post_blue_state = deepcopy(red_state)
             actions: list[DefenseAction] = []
@@ -294,15 +306,17 @@ class RoundCombatRunner:
                     red_state["capabilities"],
                 )
                 cumulative_actions.extend(actions)
+                _record_blue_defense_pressure(post_blue_state, actions, combat_memory)
             else:
                 _apply_blue_budget_cost(post_blue_state, blue_action, combat_memory)
+                _record_blue_defense_pressure(post_blue_state, [], combat_memory)
 
             score = score_round(
                 last_attacked_state,
                 post_blue_state,
                 attack,
                 recognized_threats,
-                cumulative_actions,
+                actions,
                 threat_history=recognized_threat_history,
                 recovery_history=recovery_history,
                 red_goal=red_goal,
@@ -330,6 +344,7 @@ class RoundCombatRunner:
                 combat_memory.finalized = True
             if red_action == "ABORT":
                 combat_memory.abort_requested = True
+            _update_red_retry_memory(combat_memory, red_action, detected_this_step, current_recovery)
 
             step_log = {
                 "step": step_number,
@@ -367,7 +382,6 @@ class RoundCombatRunner:
                 policy_detection_log,
                 risk_log,
                 defense_log,
-                causal_log,
                 report_log,
             ]
 
@@ -390,6 +404,24 @@ class RoundCombatRunner:
 
         if final_score is None:
             raise RuntimeError("RoundCombatRunner produced no steps")
+
+        combat_mutation_log = _aggregate_combat_mutation_log(step_logs)
+        final_causal, final_causal_log = assess_causal_consistency(
+            attack=attack,
+            red_goal=red_goal,
+            red_tactic={
+                **tactic,
+                "strategy": combat_memory.active_strategy,
+                "combat_step_count": len(step_logs),
+                "mutation_log_kind": "combat_episode_aggregate",
+            },
+            mutation_log=combat_mutation_log,
+            pre_attack_tags=red_tags,
+            situation_tags=sorted(episode_situation_tags),
+            threats=episode_recognized_threats or final_threats,
+            score=final_score,
+        )
+        final_decision_logs.insert(-1, final_causal_log)
 
         blue_policy_before = export_blue_policy_state(current_state)
         if self.blue_update_enabled:
@@ -443,6 +475,7 @@ class RoundCombatRunner:
             "red_situation_tags": red_tags,
             "red_situation_tag_details": [detail.to_dict() for detail in tag_details],
             "combat_steps": step_logs,
+            "combat_mutation_log": combat_mutation_log,
             "step_count": len(step_logs),
             "max_steps": self.max_steps,
             "termination_reason": termination_reason,
@@ -466,6 +499,8 @@ class RoundCombatRunner:
                 "goal_success": final_score.goal_success,
                 "goal_reward": final_score.goal_reward,
                 "mission_impact_score": final_score.evidence.get("mission_impact", {}).get("mission_impact_score"),
+                "causal_consistency_score": final_causal["consistency_score"],
+                "causal_consistency_status": final_causal["status"],
                 "detection_success": final_score.detection_success,
                 "recovery_success": final_score.recovery_success,
                 "termination_reason": termination_reason,
@@ -508,13 +543,26 @@ def run_combat_rounds(
 
 def _plan_red_step(step_number: int, memory: CombatStepMemory) -> str:
     if memory.red_budget < 0.08:
+        if memory.low_budget_waits < 3:
+            return "WAIT"
         return "ABORT"
     if step_number == 1:
         return "PROBE_BOUNDARY"
     if memory.finalized and memory.last_effect_score < 0.62:
+        if memory.retry_attempts < 2 and memory.red_budget >= 0.12:
+            return "SWITCH_TACTIC"
+        if memory.low_budget_waits < 2:
+            return "WAIT"
         return "ABORT"
-    if memory.last_detected and memory.last_recovered and memory.tactic_switches >= 2 and step_number >= 5:
-        return "ABORT"
+    if memory.last_detected and memory.last_recovered:
+        if memory.last_suspicion >= 0.84 and memory.retry_attempts < 2:
+            return "WAIT"
+        if memory.tactic_switches < 3 and memory.retry_attempts < 5:
+            return "SWITCH_TACTIC"
+        if memory.retry_attempts < 7 and memory.red_budget >= 0.14:
+            return "SLOW_DRIFT"
+        if step_number >= 12 and memory.last_effect_score < 0.22:
+            return "ABORT"
     if memory.last_detected and memory.tactic_switches < 2 and memory.last_effect_score < 0.72:
         return "SWITCH_TACTIC"
     if memory.last_suspicion >= 0.84 and memory.last_effect_score < 0.50:
@@ -565,14 +613,27 @@ def _execute_red_step(
     changed_paths: list[str] = []
     requested_delta: Any = None
     applied_delta: Any = None
+    budget_before = memory.red_budget
+    if memory.last_detected and memory.last_recovered and red_action in {
+        "WAIT",
+        "SWITCH_TACTIC",
+        "SLOW_DRIFT",
+        "ESCALATE_MUTATION",
+    }:
+        memory.retry_attempts += 1
 
     if red_action == "WAIT":
         _recover_red_budget(memory, 0.025)
+        if budget_before < 0.14:
+            memory.low_budget_waits += 1
     elif red_action == "ABORT":
         memory.red_budget = max(0.0, round(memory.red_budget - 0.01, 4))
     elif red_action == "FINALIZE_ATTACK":
         memory.red_budget = max(0.0, round(memory.red_budget - 0.015, 4))
+        memory.finalize_attempts += 1
+        memory.low_budget_waits = 0
     else:
+        memory.low_budget_waits = 0
         if red_action == "SWITCH_TACTIC":
             memory.tactic_switches += 1
             memory.active_strategy = _next_strategy(attack.name, memory.active_strategy or base_tactic.get("strategy"))
@@ -695,6 +756,25 @@ def _blue_idle_log(blue_action: str, recognized_threats: list[Threat], memory: C
     )
 
 
+def _record_blue_defense_pressure(state: dict, actions: list[DefenseAction], memory: CombatStepMemory) -> None:
+    action_cost = round(sum(float(action.availability_cost) for action in actions), 4)
+    if actions:
+        memory.blue_defense_cost_total = round(memory.blue_defense_cost_total + action_cost, 4)
+        memory.blue_defense_steps += 1
+        memory.blue_consecutive_defense_steps += 1
+        memory.blue_defense_action_count += len(actions)
+    else:
+        memory.blue_consecutive_defense_steps = 0
+
+    state.setdefault("defense_runtime", {})["combat_attrition"] = {
+        "current_action_cost": action_cost,
+        "round_defense_cost": memory.blue_defense_cost_total,
+        "defense_steps": memory.blue_defense_steps,
+        "consecutive_defense_steps": memory.blue_consecutive_defense_steps,
+        "defense_action_count": memory.blue_defense_action_count,
+    }
+
+
 def _apply_blue_budget_cost(state: dict, blue_action: str, memory: CombatStepMemory) -> None:
     compute_cost, power_cost = {
         "WAIT": (0.0, 0.0),
@@ -722,6 +802,8 @@ def _termination_reason(
         return "continue"
     if red_action == "ABORT":
         return "red_abort"
+    if score.winner == "RED_ATTRITION":
+        return "red_attrition_success"
     if blue_action == "DECLARE_STABLE" and memory.stable_steps >= 3:
         return "blue_declared_stable"
     if red_action == "FINALIZE_ATTACK" and score.goal_success and not score.detection_success:
@@ -730,6 +812,10 @@ def _termination_reason(
         return "blue_recovered_final_attack"
     if red_action == "FINALIZE_ATTACK" and score.goal_success:
         return "red_finalized_detected"
+    if red_action == "FINALIZE_ATTACK" and score.detection_success:
+        return "blue_detected_final_attack"
+    if red_action == "FINALIZE_ATTACK":
+        return "red_finalized_no_effect"
     if step_number >= max_steps:
         return "max_steps"
     return "continue"
@@ -739,6 +825,22 @@ def _next_stable_steps(memory: CombatStepMemory, red_action: str, suspicion: flo
     if red_action in {"WAIT", "ABORT"} and suspicion < 0.35 and not score.attack_success:
         return memory.stable_steps + 1
     return 0
+
+
+def _update_red_retry_memory(
+    memory: CombatStepMemory,
+    red_action: str,
+    detected_this_step: bool,
+    current_recovery: bool,
+) -> None:
+    if detected_this_step and current_recovery:
+        memory.recovery_streak += 1
+    elif not current_recovery:
+        memory.recovery_streak = 0
+    if red_action in {"FINALIZE_ATTACK", "ABORT"}:
+        return
+    if memory.last_effect_score >= 0.62 and not detected_this_step:
+        memory.retry_attempts = max(0, memory.retry_attempts - 1)
 
 
 def _effect_score(score: Score) -> float:
@@ -836,6 +938,44 @@ def _budget_snapshot(memory: CombatStepMemory) -> dict[str, float]:
         "red_budget": memory.red_budget,
         "blue_compute_budget": memory.blue_compute_budget,
         "blue_power_budget": memory.blue_power_budget,
+        "red_retry_attempts": memory.retry_attempts,
+        "red_finalize_attempts": memory.finalize_attempts,
+        "red_low_budget_waits": memory.low_budget_waits,
+        "red_recovery_streak": memory.recovery_streak,
+        "blue_round_defense_cost": memory.blue_defense_cost_total,
+        "blue_defense_steps": memory.blue_defense_steps,
+    }
+
+
+def _aggregate_combat_mutation_log(step_logs: list[dict]) -> dict:
+    changed_paths: set[str] = set()
+    step_mutations: list[dict] = []
+    for step in step_logs:
+        red_step = step.get("red_step", {})
+        step_paths = sorted(set(red_step.get("changed_paths", [])))
+        if not step_paths:
+            continue
+        changed_paths.update(step_paths)
+        step_mutations.append(
+            {
+                "step": step.get("step"),
+                "red_action": step.get("red_action"),
+                "strategy": red_step.get("strategy"),
+                "changed_paths": step_paths,
+                "requested_delta": deepcopy(red_step.get("requested_delta")),
+                "applied_delta": deepcopy(red_step.get("applied_delta")),
+            }
+        )
+
+    ordered_paths = sorted(changed_paths)
+    return {
+        "agent": "RedStepPlanner",
+        "event": "combat_episode_mutation_summary",
+        "reason": "aggregate_combat_step_mutations",
+        "changed_paths": ordered_paths,
+        "policy_decisions": [{"path": path, "approved": True} for path in ordered_paths],
+        "step_mutations": step_mutations,
+        "mutation_step_count": len(step_mutations),
     }
 
 
