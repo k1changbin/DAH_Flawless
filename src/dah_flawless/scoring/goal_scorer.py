@@ -186,17 +186,36 @@ def _score_blue_overdefense_attrition(**ctx: Any) -> dict[str, Any]:
     pre_availability = float(ctx["pre_defense_state"]["mission"]["availability"])
     post_availability = float(ctx["post_defense_state"]["mission"]["availability"])
     availability_drop = max(0.0, pre_availability - post_availability)
+    combat_attrition = ctx["post_defense_state"].get("defense_runtime", {}).get("combat_attrition", {})
+    round_defense_cost = float(combat_attrition.get("round_defense_cost", action_cost))
+    red_round_attack_cost = float(combat_attrition.get("red_round_attack_cost", 0.0))
+    net_defense_cost = max(0.0, round_defense_cost - red_round_attack_cost)
+    defense_to_attack_cost_ratio = round_defense_cost / max(red_round_attack_cost, 0.01)
+    cost_effective = net_defense_cost >= 0.06 and defense_to_attack_cost_ratio >= 1.20
     action_count = len(ctx["actions"])
     high_cost_actions = [action.action for action in ctx["actions"] if action.availability_cost >= 0.05]
-    effect_score = min(1.0, action_cost * 4.0 + availability_drop * 3.0 + action_count / 10.0)
+    effect_score = min(
+        1.0,
+        action_cost * 2.0
+        + round_defense_cost * 1.2
+        + availability_drop * 2.4
+        + net_defense_cost * 1.4
+        + action_count / 14.0,
+    )
+    pressure_success = action_cost >= 0.10 or availability_drop >= 0.08 or len(high_cost_actions) >= 2
 
     return _goal_result(
         ctx,
         effect_score=effect_score,
-        goal_success=action_cost >= 0.10 or availability_drop >= 0.08 or len(high_cost_actions) >= 2,
+        goal_success=pressure_success and cost_effective,
         evidence={
             "action_cost": action_cost,
             "availability_drop": round(availability_drop, 4),
+            "round_defense_cost": round(round_defense_cost, 4),
+            "red_round_attack_cost": round(red_round_attack_cost, 4),
+            "net_defense_cost": round(net_defense_cost, 4),
+            "defense_to_attack_cost_ratio": round(defense_to_attack_cost_ratio, 4),
+            "cost_effective": cost_effective,
             "defense_action_count": action_count,
             "high_cost_actions": high_cost_actions,
         },

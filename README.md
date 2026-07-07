@@ -77,6 +77,20 @@ $env:PYTHONPATH='src'
 python -c "from dah_flawless.environment.round_combat_runner import run_combat_rounds; logs, summary = run_combat_rounds(seed=42, rounds=3, max_steps=30); print(summary)"
 ```
 
+학습/감사용 JSONL과 별도로 프론트엔드 replay JSON을 만들려면:
+
+```powershell
+$env:PYTHONPATH='src'
+python -c "from pathlib import Path; from dah_flawless.environment.round_combat_runner import run_combat_rounds; run_combat_rounds(seed=42, rounds=3, max_steps=30, log_path=Path('data/logs/round_logs.jsonl'), summary_path=Path('data/logs/summary.json'), frontend_log_path=Path('data/frontend/combat_replay.json'))"
+```
+
+이미 생성된 학습 로그를 프론트엔드용으로 변환하려면:
+
+```powershell
+$env:PYTHONPATH='src'
+python scripts/generate_frontend_log.py --logs data/logs/round_logs.jsonl --summary data/logs/summary.json --out data/frontend/combat_replay.json
+```
+
 Blue-only -> Red-only -> fixed-eval 학습 cadence로 실행하려면:
 
 ```powershell
@@ -139,7 +153,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `133 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `140 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, outcome label/reward shaping, attrition cost-effectiveness guard, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, frontend combat replay log, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -154,12 +168,16 @@ python -m unittest discover -s tests
 | `red_goal` | Red Goal Planner가 선택한 cyber-effect 목표 |
 | `combat_steps` | RoundCombatRunner 실행 시 step별 Red/Blue action, suspicion, budget, 중간 score |
 | `termination_reason` | RoundCombatRunner가 episode를 끝낸 이유. 예: red_abort, red_finalized_detected, max_steps |
+| `frontend_replay.json` | 프론트엔드용 별도 projection. `schema`, `summary`, `filters`, `rounds[].timeline`, `highlights`, `action_runs`만 포함 |
 | `blue_policy_state` | Blue의 domain/effect sensitivity, threshold, trust, feedback count, effect별 mission-impact EMA |
 | `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
 | `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |
 | `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약. mission-impact score 포함 |
 | `score.goal_success` | Red가 선택한 cyber-effect 목표 달성 여부 |
 | `score.goal_reward` | Red Goal Planner/Feedback Learner에 반영되는 목표별 reward. contract-supported 목표는 mission-impact 보정 포함 |
+| `score.winner_side` | outcome display용 승패 주체. `RED`, `BLUE`, `DRAW` |
+| `score.winner_detail` | outcome display/학습 해석용 세부 결과. `BREACH`, `ATTRITION`, `PARTIAL_BREACH`, `DETECTION`, `RECOVERY`, `NO_EFFECT` 등 |
+| `score.outcome_reason` | 왜 해당 결과 라벨이 붙었는지 설명하는 짧은 reason code |
 | `score.evidence.goal_score` | 목표별 판정 근거. 예: ACK gap, priority drift, channel suppression |
 | `score.evidence.mission_impact` | observe 오염이 임무 판단/안전/명령 freshness/가용성에 미친 영향 점수 |
 | `block`, `episode`, `global_step` | TrainingScheduler/EpisodeRunner 실행 단위 |

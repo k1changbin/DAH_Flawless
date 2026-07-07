@@ -41,6 +41,7 @@ from dah_flawless.environment.simulator import _advance_normal_state
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
 from dah_flawless.observation import sync_external_observe_from_flat
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
+from dah_flawless.reporting.frontend_log import write_frontend_combat_log
 from dah_flawless.scoring.causal_consistency import assess_causal_consistency
 from dah_flawless.scoring.metrics import summarize_logs
 from dah_flawless.scoring.scorer import score_round
@@ -86,6 +87,9 @@ class CombatStepMemory:
     finalize_attempts: int = 0
     low_budget_waits: int = 0
     recovery_streak: int = 0
+    red_attack_cost_total: float = 0.0
+    red_last_action_cost: float = 0.0
+    red_mutation_steps: int = 0
     blue_defense_cost_total: float = 0.0
     blue_defense_steps: int = 0
     blue_consecutive_defense_steps: int = 0
@@ -148,6 +152,7 @@ class RoundCombatRunner:
         *,
         log_path: Path | None = None,
         summary_path: Path | None = None,
+        frontend_log_path: Path | None = None,
         initial_state: dict | None = None,
         previous_logs: list[dict] | None = None,
     ) -> tuple[list[dict], dict]:
@@ -212,6 +217,8 @@ class RoundCombatRunner:
             import json
 
             summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        if frontend_log_path is not None:
+            write_frontend_combat_log(frontend_log_path, logs, summary)
         return logs, summary
 
     def _run_single_round(
@@ -493,6 +500,9 @@ class RoundCombatRunner:
                 "red_policy_updated": self.red_update_enabled,
                 "blue_policy_updated": self.blue_update_enabled,
                 "winner": final_score.winner,
+                "winner_side": final_score.winner_side,
+                "winner_detail": final_score.winner_detail,
+                "outcome_reason": final_score.outcome_reason,
                 "target_domain": attack.target_domain,
                 "goal_id": final_score.goal_id,
                 "attack_success": final_score.attack_success,
@@ -528,6 +538,7 @@ def run_combat_rounds(
     mutation_profile: str = DEFAULT_MUTATION_PROFILE,
     log_path: Path | None = None,
     summary_path: Path | None = None,
+    frontend_log_path: Path | None = None,
 ) -> tuple[list[dict], dict]:
     runner = RoundCombatRunner(
         seed=seed,
@@ -538,7 +549,7 @@ def run_combat_rounds(
         stealth_mode=stealth_mode,
         mutation_profile=mutation_profile,
     )
-    return runner.run(log_path=log_path, summary_path=summary_path)
+    return runner.run(log_path=log_path, summary_path=summary_path, frontend_log_path=frontend_log_path)
 
 
 def _plan_red_step(step_number: int, memory: CombatStepMemory) -> str:
@@ -587,6 +598,10 @@ def _plan_blue_step(
 ) -> str:
     if memory.blue_compute_budget < 0.06 or memory.blue_power_budget < 0.06:
         return "WAIT"
+    if memory.blue_consecutive_defense_steps >= 3 and memory.last_recovered and suspicion < 0.92:
+        return "INSPECT_INTERNAL" if suspicion >= 0.68 else "PASSIVE_MONITOR"
+    if memory.blue_defense_cost_total >= 0.36 and memory.last_effect_score < 0.35 and suspicion < 0.86:
+        return "INSPECT_INTERNAL" if suspicion >= 0.55 else "WAIT"
     if memory.stable_steps >= 3 and suspicion < 0.45:
         return "DECLARE_STABLE"
     if not candidate_threats or suspicion < 0.35:
@@ -614,6 +629,7 @@ def _execute_red_step(
     requested_delta: Any = None
     applied_delta: Any = None
     budget_before = memory.red_budget
+    action_cost = 0.0
     if memory.last_detected and memory.last_recovered and red_action in {
         "WAIT",
         "SWITCH_TACTIC",
@@ -627,9 +643,11 @@ def _execute_red_step(
         if budget_before < 0.14:
             memory.low_budget_waits += 1
     elif red_action == "ABORT":
-        memory.red_budget = max(0.0, round(memory.red_budget - 0.01, 4))
+        action_cost = 0.01
+        memory.red_budget = max(0.0, round(memory.red_budget - action_cost, 4))
     elif red_action == "FINALIZE_ATTACK":
-        memory.red_budget = max(0.0, round(memory.red_budget - 0.015, 4))
+        action_cost = 0.015
+        memory.red_budget = max(0.0, round(memory.red_budget - action_cost, 4))
         memory.finalize_attempts += 1
         memory.low_budget_waits = 0
     else:
@@ -644,7 +662,19 @@ def _execute_red_step(
             strategy=memory.active_strategy or base_tactic.get("strategy"),
             scale=scale,
         )
-        memory.red_budget = max(0.0, round(memory.red_budget - _red_action_cost(red_action) * scale, 4))
+        action_cost = round(_red_action_cost(red_action) * scale, 4)
+        memory.red_budget = max(0.0, round(memory.red_budget - action_cost, 4))
+        if changed_paths:
+            memory.red_mutation_steps += 1
+
+    memory.red_last_action_cost = round(action_cost, 4)
+    memory.red_attack_cost_total = round(memory.red_attack_cost_total + action_cost, 4)
+    next_state.setdefault("defense_runtime", {})["red_combat_pressure"] = {
+        "current_action_cost": memory.red_last_action_cost,
+        "round_attack_cost": memory.red_attack_cost_total,
+        "mutation_steps": memory.red_mutation_steps,
+        "red_budget_remaining": memory.red_budget,
+    }
 
     after = _attack_snapshot(next_state, attack.name)
     sync_external_observe_from_flat(next_state["blue_observed"])
@@ -676,17 +706,22 @@ def _apply_incremental_mutation(
         delta = round(1.2 * scale, 3)
         before = float(obs["telemetry"]["battery_percent"])
         obs["telemetry"]["battery_percent"] = round(min(100.0, before + delta), 3)
-        if strategy == "motor_status_masking" and scale >= 1.25:
+        if strategy in {"motor_status_masking", "internal_external_gap_shaping"} and scale >= 0.55:
             obs["telemetry"]["motor_status"] = "OK"
+        if strategy == "confidence_spoofing":
+            obs["telemetry"]["battery_drain_rate"] = round(max(0.2, float(obs["telemetry"].get("battery_drain_rate", 1.0)) - 0.08 * scale), 3)
         return delta, round(obs["telemetry"]["battery_percent"] - before, 3), ["telemetry.battery_percent"]
 
     if attack_name == "PRIORITY_POISONING":
-        step_delta = round(0.035 * scale, 4)
+        step_delta = round(0.042 * scale, 4)
         priorities = obs["mission"]["area_priority"]
         before = deepcopy(priorities)
         priorities["A"] = round(max(0.0, float(priorities.get("A", 0.0)) - step_delta), 4)
         priorities["C"] = round(min(1.0, float(priorities.get("C", 0.0)) + step_delta), 4)
-        if priorities["C"] >= priorities["A"] or strategy == "recommended_area_nudge":
+        if strategy == "mission_confidence_shaping":
+            priorities["B"] = round(max(0.0, float(priorities.get("B", 0.0)) - step_delta * 0.4), 4)
+            priorities["C"] = round(min(1.0, float(priorities.get("C", 0.0)) + step_delta * 0.4), 4)
+        if priorities["C"] >= priorities["A"] or strategy in {"recommended_area_nudge", "mission_confidence_shaping"}:
             obs["mission"]["recommended_area"] = "C"
         return (
             {"A": -step_delta, "C": step_delta},
@@ -697,28 +732,61 @@ def _apply_incremental_mutation(
     if attack_name == "TIME_DESYNC_REPLAY":
         sequence_delta = -max(1, int(round(scale)))
         timestamp_delta = -max(4, int(round(8 * scale)))
+        ack_sequence_gap = 1
+        ack_delay_delta = int(round(60 * scale))
+        latency_delta = int(round(25 * scale))
+        packet_loss_delta = 0.006 * scale
+        jitter_delta = 0
+        heartbeat_gap_delta = 0
+        if strategy == "ack_confusion":
+            ack_sequence_gap = max(1, int(round(2 * scale)))
+            ack_delay_delta = int(round(280 * scale))
+            latency_delta = int(round(45 * scale))
+        elif strategy in {"delay", "selective_delay"}:
+            timestamp_delta = -max(5, int(round(14 * scale)))
+            latency_delta = int(round(180 * scale))
+            jitter_delta = int(round(120 * scale))
+        elif strategy == "selective_drop":
+            packet_loss_delta = 0.035 * scale
+            heartbeat_gap_delta = int(round(900 * scale))
+            jitter_delta = int(round(100 * scale))
+        elif strategy == "metadata_poisoning":
+            sequence_delta = -1
+            timestamp_delta = -max(4, int(round(6 * scale)))
+            latency_delta = int(round(40 * scale))
         before = {
             "sequence_number": obs["c2_message"]["sequence_number"],
             "received_timestamp": obs["time"]["received_timestamp"],
             "ack_sequence_number": obs["c2_message"].get("ack", {}).get("sequence_number"),
             "latency_ms": obs["comms"].get("latency_ms"),
             "packet_loss": obs["comms"].get("packet_loss"),
+            "ack_delay_ms": obs["comms"].get("ack_delay_ms"),
+            "packet_interval_jitter_ms": obs["comms"].get("packet_interval_jitter_ms"),
+            "heartbeat_gap_ms": obs["comms"].get("heartbeat_gap_ms"),
         }
         obs["c2_message"]["sequence_number"] = max(0, int(obs["c2_message"]["sequence_number"]) + sequence_delta)
         obs["time"]["received_timestamp"] = int(obs["time"]["received_timestamp"]) + timestamp_delta
         ack = obs["c2_message"].setdefault("ack", {})
         ack["visible"] = True
-        ack["sequence_number"] = max(0, int(obs["c2_message"]["sequence_number"]) - 1)
+        ack["sequence_number"] = max(0, int(obs["c2_message"]["sequence_number"]) - ack_sequence_gap)
         ack["status"] = "ACCEPTED"
         obs["comms"]["ack_visible"] = True
-        obs["comms"]["latency_ms"] = int(obs["comms"].get("latency_ms", 0)) + int(round(25 * scale))
-        obs["comms"]["packet_loss"] = round(min(1.0, float(obs["comms"].get("packet_loss", 0.0)) + 0.006 * scale), 4)
+        obs["comms"]["latency_ms"] = int(obs["comms"].get("latency_ms", 0)) + latency_delta
+        obs["comms"]["packet_loss"] = round(min(1.0, float(obs["comms"].get("packet_loss", 0.0)) + packet_loss_delta), 4)
+        obs["comms"]["ack_delay_ms"] = int(obs["comms"].get("ack_delay_ms", 0)) + ack_delay_delta
+        obs["comms"]["packet_interval_jitter_ms"] = int(obs["comms"].get("packet_interval_jitter_ms", 0)) + jitter_delta
+        obs["comms"]["heartbeat_gap_ms"] = int(obs["comms"].get("heartbeat_gap_ms", 0)) + heartbeat_gap_delta
+        if strategy == "selective_drop":
+            obs["comms"]["message_queue_depth"] = int(obs["comms"].get("message_queue_depth", 0)) + max(1, int(round(scale)))
         after = {
             "sequence_number": obs["c2_message"]["sequence_number"],
             "received_timestamp": obs["time"]["received_timestamp"],
             "ack_sequence_number": ack["sequence_number"],
             "latency_ms": obs["comms"].get("latency_ms"),
             "packet_loss": obs["comms"].get("packet_loss"),
+            "ack_delay_ms": obs["comms"].get("ack_delay_ms"),
+            "packet_interval_jitter_ms": obs["comms"].get("packet_interval_jitter_ms"),
+            "heartbeat_gap_ms": obs["comms"].get("heartbeat_gap_ms"),
         }
         return (
             {"sequence_delta": sequence_delta, "timestamp_delta_s": timestamp_delta},
@@ -729,6 +797,9 @@ def _apply_incremental_mutation(
                 "c2_message.ack.sequence_number",
                 "comms.latency_ms",
                 "comms.packet_loss",
+                "comms.ack_delay_ms",
+                "comms.packet_interval_jitter_ms",
+                "comms.heartbeat_gap_ms",
             ],
         )
 
@@ -763,6 +834,10 @@ def _record_blue_defense_pressure(state: dict, actions: list[DefenseAction], mem
         memory.blue_defense_steps += 1
         memory.blue_consecutive_defense_steps += 1
         memory.blue_defense_action_count += len(actions)
+        compute_cost = action_cost * 0.55 + len(actions) * 0.006
+        power_cost = action_cost * 0.35 + len(actions) * 0.004
+        memory.blue_compute_budget = round(min(1.0, max(0.0, memory.blue_compute_budget - compute_cost + 0.004)), 4)
+        memory.blue_power_budget = round(min(1.0, max(0.0, memory.blue_power_budget - power_cost + 0.003)), 4)
     else:
         memory.blue_consecutive_defense_steps = 0
 
@@ -772,6 +847,10 @@ def _record_blue_defense_pressure(state: dict, actions: list[DefenseAction], mem
         "defense_steps": memory.blue_defense_steps,
         "consecutive_defense_steps": memory.blue_consecutive_defense_steps,
         "defense_action_count": memory.blue_defense_action_count,
+        "red_current_action_cost": memory.red_last_action_cost,
+        "red_round_attack_cost": memory.red_attack_cost_total,
+        "red_mutation_steps": memory.red_mutation_steps,
+        "red_budget_remaining": memory.red_budget,
     }
 
 
@@ -942,6 +1021,9 @@ def _budget_snapshot(memory: CombatStepMemory) -> dict[str, float]:
         "red_finalize_attempts": memory.finalize_attempts,
         "red_low_budget_waits": memory.low_budget_waits,
         "red_recovery_streak": memory.recovery_streak,
+        "red_round_attack_cost": memory.red_attack_cost_total,
+        "red_last_action_cost": memory.red_last_action_cost,
+        "red_mutation_steps": memory.red_mutation_steps,
         "blue_round_defense_cost": memory.blue_defense_cost_total,
         "blue_defense_steps": memory.blue_defense_steps,
     }

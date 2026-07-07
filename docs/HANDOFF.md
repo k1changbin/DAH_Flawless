@@ -49,6 +49,7 @@ raw_world
 - Rolling Log Memory는 긴 round-mode run에서 Red planning context가 원 로그 전체에 과적합되지 않도록 일정 라운드마다 로그를 압축해 proxy logs로 바꾼다. 출력 JSONL audit log는 유지하고, `previous_logs` 입력만 `proxy_logs + recent_logs`로 줄인다.
 - Scenario Pack은 `clean_start`, `degraded_start`, `satcom_delay`, `gnss_degraded`, `c2_metadata_noisy`, `telemetry_conflict`, `low_trust_start`를 제공한다. 기본 holdout은 전체 scenario pack을 사용한다.
 - Report Generator는 training/holdout summary와 optional JSONL logs를 읽어 보고서용 Markdown/JSON을 만든다. `main.py --report-out` 또는 `scripts/generate_training_report.py`로 실행한다.
+- Frontend combat log는 학습/감사용 JSONL에서 파생되는 별도 JSON projection이다. `src/dah_flawless/reporting/frontend_log.py` 또는 `scripts/generate_frontend_log.py`를 사용한다. 학습 로그는 `combat_steps`, `decision_log`, policy/scorer evidence를 유지하고, 프론트엔드 로그는 `schema`, `summary`, `filters`, `rounds[].timeline`, `highlights`, `action_runs` 중심으로 화면용 필드만 남긴다.
 
 ## 구조 원칙
 
@@ -88,6 +89,7 @@ raw_world
 | `src/dah_flawless/environment/holdout_evaluator.py` | frozen-policy seed/scenario holdout evaluator, cross-case diversity context |
 | `docs/scenario_pack.md` | scenario pack 목적과 초기 조건 |
 | `src/dah_flawless/reporting/report_generator.py` | training/holdout report generator |
+| `src/dah_flawless/reporting/frontend_log.py` | frontend replay log projection for RoundCombatRunner outputs |
 | `docs/report_generator.md` | report generator 사용법 |
 | `src/dah_flawless/blue/` | Blue detection/mission/defense/report agents |
 | `src/dah_flawless/scoring/scorer.py` | scorer 판정 |
