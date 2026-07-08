@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { CaretLeft, CaretRight, ShieldCheck, Crosshair } from "@phosphor-icons/react";
 import { getRound, getStep } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { DefenseAction, TimelineStep, ZtaDecision } from "../types/replay";
 
 /** defense_actions는 문자열/객체 혼재 가능 (실데이터 검증됨) */
@@ -16,6 +17,9 @@ const SPRING = { type: "spring", stiffness: 300, damping: 32 } as const;
 const W_RAIL = 56;
 const W_NORMAL = 288;
 const W_FOCUSED = 416;
+const W_COMPACT_RAIL = 48;
+const W_COMPACT_NORMAL = 232;
+const W_COMPACT_FOCUSED = 352;
 
 function ztaDecisionColor(decision: ZtaDecision): string {
   switch (decision) {
@@ -304,17 +308,96 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
   const step = getStep(roundIdx, stepIdx);
+  const isCompact = useMediaQuery("(max-width: 1439px)");
+  const isSheet = useMediaQuery("(max-width: 1023px)");
 
   const isRed = side === "RED";
   const isFocused = focus === side;
   const isRail = focus !== null && !isFocused;
-  const width = isFocused ? W_FOCUSED : isRail ? W_RAIL : W_NORMAL;
+  const width = isFocused
+    ? isCompact
+      ? W_COMPACT_FOCUSED
+      : W_FOCUSED
+    : isRail
+      ? isCompact
+        ? W_COMPACT_RAIL
+        : W_RAIL
+      : isCompact
+        ? W_COMPACT_NORMAL
+        : W_NORMAL;
 
   const accent = isRed ? "red" : "blue";
   const strokeCls = isFocused ? (isRed ? "bg-red-ops" : "bg-blue-def") : "bg-hud";
   const titleCls = isRed ? "text-red-ops" : "text-blue-def";
   const title = isRed ? "RED OPS" : "BLUE DEF";
   const Icon = isRed ? Crosshair : ShieldCheck;
+
+  if (isSheet) {
+    if (!isFocused) {
+      return (
+        <motion.button
+          data-side={side}
+          onClick={() => toggleFocus(side)}
+          aria-label={`${title} sheet open`}
+          className={`fixed top-20 z-30 flex h-32 w-10 flex-col items-center justify-center gap-2 border bg-black/30 shadow-[0_18px_48px_rgba(0,0,0,0.35)] backdrop-blur-xl ${
+            isRed
+              ? "left-2 border-red-dim text-red-ops"
+              : "right-2 border-blue-dim text-blue-def"
+          }`}
+          initial={{ opacity: 0, x: isRed ? -12 : 12 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <Icon size={16} />
+          <span
+            className="font-display text-[10px] font-semibold uppercase tracking-[0.12em]"
+            style={{ writingMode: "vertical-rl" }}
+          >
+            {isRed ? "RED" : "BLUE"}
+          </span>
+        </motion.button>
+      );
+    }
+
+    return (
+      <motion.div
+        data-side={side}
+        className="fixed inset-x-2 bottom-32 top-16 z-40"
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 24 }}
+        transition={SPRING}
+      >
+        <div className={`hud-clip h-full p-px ${isRed ? "bg-red-ops" : "bg-blue-def"}`}>
+          <div className="hud-clip hud-glass flex h-full flex-col backdrop-blur-xl">
+            <button
+              onClick={() => toggleFocus(side)}
+              aria-expanded
+              aria-label={`${title} sheet close`}
+              className="flex shrink-0 items-center justify-between border-b border-white/12 bg-black/16 px-3 py-2 transition-colors hover:bg-white/8"
+            >
+              <span className="flex items-center gap-2">
+                <Icon size={14} className={titleCls} />
+                <span
+                  className={`font-display text-[11px] font-semibold uppercase tracking-[0.08em] ${titleCls}`}
+                >
+                  {title}
+                </span>
+              </span>
+              <span className="font-mono text-[10px] uppercase text-text-low">close</span>
+            </button>
+            <div className="min-h-0 flex-1">
+              {isRed ? (
+                <RedContent step={step} expanded />
+              ) : (
+                <BlueContent step={step} expanded />
+              )}
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -325,7 +408,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
       data-accent={accent}
     >
       <div className={`hud-clip h-full p-px transition-colors duration-300 ${strokeCls}`}>
-        <div className="hud-clip flex h-full w-full flex-col bg-surface-1/90 backdrop-blur-md">
+        <div className="hud-clip hud-glass flex h-full w-full flex-col backdrop-blur-xl">
           <AnimatePresence mode="popLayout" initial={false}>
             {isRail ? (
               /* 레일 모드: 클릭하면 이 진영으로 포커스 전환 */
@@ -337,7 +420,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
                 transition={{ duration: 0.15 }}
                 onClick={() => toggleFocus(side)}
                 aria-label={`${title} 패널 펼치기`}
-                className="flex h-full w-full flex-col items-center gap-3 py-3 transition-colors hover:bg-surface-2/50"
+                className="flex h-full w-full flex-col items-center gap-3 py-3 transition-colors hover:bg-white/8"
               >
                 <Icon size={18} className={titleCls} />
                 <span
@@ -370,7 +453,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
                   onClick={() => toggleFocus(side)}
                   aria-expanded={isFocused}
                   aria-label={`${title} 패널 ${isFocused ? "접기" : "확장"}`}
-                  className="flex shrink-0 items-center justify-between border-b border-hud/60 px-3 py-2 transition-colors hover:bg-surface-2/50"
+                  className="flex shrink-0 items-center justify-between border-b border-white/12 bg-black/16 px-3 py-2 transition-colors hover:bg-white/8"
                 >
                   <span className="flex items-center gap-2">
                     <Icon size={14} className={titleCls} />

@@ -1,155 +1,227 @@
 import { useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Crosshair, ShieldCheck } from "@phosphor-icons/react";
+import {
+  ArrowRight,
+  Broadcast,
+  Crosshair,
+  LockKey,
+  ShieldCheck,
+  Waveform,
+} from "@phosphor-icons/react";
 import { replay } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
 
-const SPRING = { type: "spring", stiffness: 220, damping: 30 } as const;
+const EASE = [0.23, 1, 0.32, 1] as const;
 
-const RED_ITEMS = ["TIME_DESYNC_REPLAY", "TELEMETRY_FDI", "PRIORITY_POISONING"];
-const BLUE_ITEMS = ["ZTA POLICY GATE", "INTERNAL OBSERVE ANCHOR", "TRUSTED RESTORE"];
+const METRICS = [
+  { label: "ROUNDS", value: replay.rounds.length.toString(), tone: "text-hud-active" },
+  { label: "SEED", value: "42", tone: "text-warn" },
+  { label: "ZTA", value: "ON", tone: "text-ok" },
+];
 
-/**
- * 게임 런처식 랜딩 (레퍼런스: 좌우 스플릿 히어로).
- * 좌 = RED 공격, 우 = BLUE 방어. 호버로 진영이 밀고 당기고, CTA로 대시보드 진입.
- */
+const SIDE_COPY = {
+  RED: {
+    icon: Crosshair,
+    title: "RED OFFENSE",
+    body: "송출 텔레메트리는 관측만 가능하고, 수신 흐름은 기억 기반 혼동 자원으로 축적됩니다.",
+    tone: "border-red-ops/55 bg-red-ops/10 text-red-ops",
+    bar: "bg-red-ops",
+    score: "FDI",
+  },
+  BLUE: {
+    icon: ShieldCheck,
+    title: "BLUE DEFENSE",
+    body: "ZTA 정책과 내부 관측 anchor를 기준으로 명령 신뢰도와 복구 경로를 판별합니다.",
+    tone: "border-blue-def/55 bg-blue-def/10 text-blue-def",
+    bar: "bg-blue-def",
+    score: "ZTA",
+  },
+} as const;
+
+const SIGNALS = [
+  { label: "TX BATTERY", value: "READ ONLY", cls: "text-ok" },
+  { label: "RX COMMAND", value: "MEMORY", cls: "text-warn" },
+  { label: "MOTOR RPM", value: "LOCKED", cls: "text-hud-active" },
+];
+
+type Side = keyof typeof SIDE_COPY;
+
 export function Landing() {
   const enter = useReplayStore((s) => s.enter);
   const reduce = useReducedMotion();
-  const [side, setSide] = useState<"RED" | "BLUE" | null>(null);
+  const [activeSide, setActiveSide] = useState<Side>("RED");
 
-  const half = (mine: "RED" | "BLUE") =>
-    side === null ? 1 : side === mine ? 1.45 : 0.7;
+  const introMotion = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 18 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.55, ease: EASE },
+      };
 
   return (
-    <motion.div
-      className="relative z-10 flex h-full overflow-hidden"
+    <motion.main
+      className="landing-shell relative z-10 h-full overflow-y-auto px-4 py-4 sm:px-8 sm:py-6"
       initial={reduce ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
-      exit={{ opacity: 0, scale: 1.03 }}
-      transition={{ duration: 0.45, ease: [0.23, 1, 0.32, 1] }}
+      exit={{ opacity: 0, scale: 1.015 }}
+      transition={{ duration: 0.42, ease: EASE }}
     >
-      {/* RED 공격 진영 */}
-      <motion.section
-        onMouseEnter={() => setSide("RED")}
-        onMouseLeave={() => setSide(null)}
-        onClick={() => setSide("RED")}
-        animate={{ flexGrow: half("RED") }}
-        transition={SPRING}
-        className="relative min-w-0 basis-0 cursor-pointer overflow-hidden border-r border-hud/60"
-        style={{
-          background:
-            "radial-gradient(ellipse 90% 80% at 20% 75%, rgba(255, 93, 69, 0.14), transparent 65%)",
-        }}
-        aria-label="RED 공격 진영"
-      >
-        <motion.div
-          initial={reduce ? false : { x: -40, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.15, duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
-          className="absolute bottom-16 left-10"
-        >
-          <p className="mb-2 flex items-center gap-2 font-display text-[11px] font-semibold uppercase tracking-[0.2em] text-red-ops">
-            <Crosshair size={14} /> 공격 진영
-          </p>
-          <h2 className="font-display text-7xl font-bold leading-none tracking-tight text-text-hi">
-            RED
-          </h2>
-          <p className="mt-1 font-display text-2xl font-semibold uppercase tracking-[0.08em] text-red-ops">
-            Offense
-          </p>
-          <ul className="mt-5 space-y-1">
-            {RED_ITEMS.map((it) => (
-              <li key={it} className="font-mono text-[11px] text-text-mid">
-                {it}
-              </li>
-            ))}
-          </ul>
-        </motion.div>
-        <motion.div
-          className="pointer-events-none absolute inset-0 bg-surface-0"
-          animate={{ opacity: side === "BLUE" ? 0.55 : 0 }}
-          transition={{ duration: 0.3 }}
-        />
-      </motion.section>
+      <div className="landing-backdrop" aria-hidden />
 
-      {/* BLUE 방어 진영 */}
-      <motion.section
-        onMouseEnter={() => setSide("BLUE")}
-        onMouseLeave={() => setSide(null)}
-        onClick={() => setSide("BLUE")}
-        animate={{ flexGrow: half("BLUE") }}
-        transition={SPRING}
-        className="relative min-w-0 basis-0 cursor-pointer overflow-hidden"
-        style={{
-          background:
-            "radial-gradient(ellipse 90% 80% at 80% 75%, rgba(79, 163, 255, 0.14), transparent 65%)",
-        }}
-        aria-label="BLUE 방어 진영"
-      >
-        <motion.div
-          initial={reduce ? false : { x: 40, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.15, duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
-          className="absolute bottom-16 right-10 text-right"
+      <div className="mx-auto flex min-h-[calc(100dvh-2rem)] w-full max-w-[1220px] items-center sm:min-h-[calc(100dvh-3rem)]">
+        <motion.section
+          {...introMotion}
+          className="landing-window relative grid w-full overflow-hidden border border-white/20 bg-white/[0.075] text-text-hi shadow-2xl backdrop-blur-2xl"
+          aria-label="DAH FLAWLESS 시작 화면"
         >
-          <p className="mb-2 flex items-center justify-end gap-2 font-display text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-def">
-            방어 진영 <ShieldCheck size={14} />
-          </p>
-          <h2 className="font-display text-7xl font-bold leading-none tracking-tight text-text-hi">
-            BLUE
-          </h2>
-          <p className="mt-1 font-display text-2xl font-semibold uppercase tracking-[0.08em] text-blue-def">
-            Defense
-          </p>
-          <ul className="mt-5 space-y-1">
-            {BLUE_ITEMS.map((it) => (
-              <li key={it} className="font-mono text-[11px] text-text-mid">
-                {it}
-              </li>
-            ))}
-          </ul>
-        </motion.div>
-        <motion.div
-          className="pointer-events-none absolute inset-0 bg-surface-0"
-          animate={{ opacity: side === "RED" ? 0.55 : 0 }}
-          transition={{ duration: 0.3 }}
-        />
-      </motion.section>
+          <header className="relative z-10 flex min-h-12 items-center justify-between gap-4 border-b border-white/15 bg-black/20 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex gap-1.5" aria-hidden>
+                <span className="h-2.5 w-2.5 rounded-full bg-red-ops" />
+                <span className="h-2.5 w-2.5 rounded-full bg-warn" />
+                <span className="h-2.5 w-2.5 rounded-full bg-ok" />
+              </div>
+              <span className="truncate font-display text-xs font-semibold uppercase text-text-mid">
+                Combat replay console
+              </span>
+            </div>
+            <div className="hidden items-center gap-2 font-mono text-[10px] text-text-low sm:flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-hud-active shadow-[0_0_12px_rgba(95,212,245,0.85)]" />
+              simulation ready
+            </div>
+          </header>
 
-      {/* 중앙 오버레이: 타이틀 + 진입 CTA */}
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-between py-16">
-        <motion.header
-          initial={reduce ? false : { y: -16, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.3, duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
-          className="text-center"
-        >
-          <h1 className="font-display text-2xl font-bold tracking-[0.1em] text-text-hi">
-            DAH FLAWLESS
-          </h1>
-          <p className="mt-2 text-sm text-text-mid">
-            Red 공격과 Blue 방어가 벌이는 자율 교전의 전투 리플레이
-          </p>
-        </motion.header>
+          <div className="relative z-10 grid min-h-[620px] gap-0 lg:grid-cols-[0.86fr_1.14fr] max-[760px]:min-h-0">
+            <section className="flex min-w-0 flex-col justify-between gap-8 border-b border-white/15 p-5 sm:p-7 lg:border-b-0 lg:border-r lg:border-white/15 lg:p-9">
+              <div>
+                <p className="mb-4 inline-flex items-center gap-2 border border-white/15 bg-white/10 px-2.5 py-1 font-display text-[11px] font-semibold uppercase text-hud-active backdrop-blur-md">
+                  <Broadcast size={15} />
+                  Drone autonomous replay
+                </p>
+                <h1 className="max-w-[8ch] font-display text-5xl font-bold leading-none text-white sm:text-6xl">
+                  DAH FLAWLESS
+                </h1>
+                <p className="mt-5 max-w-md text-base leading-7 text-text-hi/86">
+                  레드의 관측 흐름과 블루의 신뢰 판별을 하나의 전장 콘솔에서 재생합니다.
+                  송출값은 관측 전용 신호로 잠그고, 수신값은 기억 기반 혼동 자원으로 추적합니다.
+                </p>
+              </div>
 
-        <motion.div
-          initial={reduce ? false : { scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: 0.7, type: "spring", stiffness: 260, damping: 20 }}
-          className="pointer-events-auto flex flex-col items-center gap-3"
-        >
-          <button
-            onClick={enter}
-            className="hud-clip border border-hud-active bg-surface-1/80 px-10 py-3.5 font-display text-sm font-bold uppercase tracking-[0.16em] text-hud-active backdrop-blur-md transition-colors hover:bg-surface-2 active:scale-[0.98]"
-          >
-            시뮬레이션 진입
-          </button>
-          <p className="font-mono text-[10px] text-text-low">
-            {replay.rounds.length} rounds / seed 42 / zta gate active
-          </p>
-        </motion.div>
+              <div className="space-y-5">
+                <div className="grid grid-cols-3 gap-2">
+                  {METRICS.map((m) => (
+                    <div key={m.label} className="border border-white/12 bg-black/24 px-3 py-3 backdrop-blur-md">
+                      <p className="font-mono text-[10px] uppercase text-text-low">{m.label}</p>
+                      <p className={`mt-1 font-display text-xl font-bold ${m.tone}`}>{m.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={enter}
+                  className="group flex w-full items-center justify-between border border-hud-active/70 bg-hud-active px-4 py-3.5 text-left font-display text-sm font-bold uppercase text-surface-0 shadow-[0_0_30px_rgba(95,212,245,0.22)] transition-transform hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  <span>시뮬레이션 진입</span>
+                  <ArrowRight
+                    size={18}
+                    className="transition-transform group-hover:translate-x-1"
+                    aria-hidden
+                  />
+                </button>
+              </div>
+            </section>
+
+            <section className="relative min-h-[520px] overflow-hidden p-3 sm:p-4 lg:min-h-0" aria-label="전장 미리보기">
+              <div className="landing-visual relative h-full min-h-[500px] overflow-hidden border border-white/15 bg-surface-0/60">
+                <div className="landing-wireframe" aria-hidden />
+
+                <div className="relative z-10 grid h-full grid-rows-[1fr_auto]">
+                  <div className="grid gap-3 p-4 sm:grid-cols-[1fr_230px] sm:p-5">
+                    <div className="flex min-h-[260px] flex-col justify-between">
+                      <div className="max-w-xs">
+                        <p className="font-display text-[11px] font-semibold uppercase text-text-low">
+                          Mission telemetry split
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold leading-tight text-white">
+                          월드값 기반 송출/수신 흐름을 분리해서 보여줍니다.
+                        </p>
+                      </div>
+
+                      <div className="grid max-w-xl gap-2 sm:grid-cols-3">
+                        {SIGNALS.map((signal) => (
+                          <div key={signal.label} className="border border-white/12 bg-black/38 p-3 backdrop-blur-md">
+                            <p className="font-mono text-[10px] text-text-low">{signal.label}</p>
+                            <p className={`mt-2 font-display text-sm font-semibold ${signal.cls}`}>{signal.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid content-start gap-2">
+                      {(["RED", "BLUE"] as Side[]).map((side) => {
+                        const item = SIDE_COPY[side];
+                        const Icon = item.icon;
+                        const active = activeSide === side;
+
+                        return (
+                          <button
+                            key={side}
+                            onMouseEnter={() => setActiveSide(side)}
+                            onFocus={() => setActiveSide(side)}
+                            onClick={() => setActiveSide(side)}
+                            className={`border p-3 text-left backdrop-blur-md transition-colors ${
+                              active
+                                ? item.tone
+                                : "border-white/12 bg-black/30 text-text-mid hover:border-white/24"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-2 font-display text-xs font-semibold">
+                                <Icon size={15} />
+                                {item.title}
+                              </span>
+                              <span className="font-mono text-[10px]">{item.score}</span>
+                            </div>
+                            <p className="mt-3 text-xs leading-5 text-text-hi/80">{item.body}</p>
+                            <div className="mt-3 h-1 bg-white/12">
+                              <div className={`h-full ${item.bar}`} style={{ width: active ? "76%" : "42%" }} />
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="grid border-t border-white/15 bg-black/42 backdrop-blur-md sm:grid-cols-3">
+                    <div className="flex items-center gap-3 border-b border-white/10 p-4 sm:border-b-0 sm:border-r">
+                      <Broadcast size={18} className="shrink-0 text-ok" />
+                      <div>
+                        <p className="font-mono text-[10px] text-text-low">TX STREAM</p>
+                        <p className="text-sm text-text-hi">read-only signal</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 border-b border-white/10 p-4 sm:border-b-0 sm:border-r">
+                      <Waveform size={18} className="shrink-0 text-warn" />
+                      <div>
+                        <p className="font-mono text-[10px] text-text-low">RX MEMORY</p>
+                        <p className="text-sm text-text-hi">confusion resource</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-4">
+                      <LockKey size={18} className="shrink-0 text-hud-active" />
+                      <div>
+                        <p className="font-mono text-[10px] text-text-low">RED ACCESS</p>
+                        <p className="text-sm text-text-hi">observe only</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </motion.section>
       </div>
-    </motion.div>
+    </motion.main>
   );
 }

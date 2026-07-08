@@ -29,7 +29,7 @@ interface AssetDef {
 }
 
 const ASSETS: AssetDef[] = [
-  { id: "SATCOM", domain: "command", pos: [0, 3.1, -1.6], kind: "satcom", callout: "right" },
+  { id: "CMD LINK", domain: "command", pos: [0, 3.1, -1.6], kind: "satcom", callout: "right" },
   { id: "UAV", domain: "telemetry", pos: [-2.7, 1.7, 0.9], kind: "uav", callout: "right" },
   { id: "UGV", domain: "mission", pos: [2.5, 0.4, 1.7], kind: "ugv", callout: "top" },
 ];
@@ -152,6 +152,7 @@ function AssetNode({
   });
 
   const color = underAttack ? C.red : C.hudActive;
+  const glowColor = underAttack ? C.red : restricted ? C.warn : C.hudActive;
 
   return (
     <group
@@ -171,6 +172,17 @@ function AssetNode({
         <sphereGeometry args={[0.6]} />
         <meshBasicMaterial />
       </mesh>
+      {(underAttack || restricted || hovered) && (
+        <mesh scale={underAttack ? 0.78 : 0.62}>
+          <sphereGeometry args={[1, 20, 20]} />
+          <meshBasicMaterial
+            color={glowColor}
+            transparent
+            opacity={underAttack ? 0.16 : 0.09}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
       {def.kind === "satcom" && (
         <mesh>
           <octahedronGeometry args={[0.34]} />
@@ -239,6 +251,15 @@ function DomainLink({
   return (
     <group>
       {/* 베이스 라인 */}
+      {(attack || restricted) && (
+        <Line
+          points={[from, to]}
+          color={color}
+          lineWidth={attack ? 8 : 5}
+          transparent
+          opacity={attack ? 0.13 : 0.09}
+        />
+      )}
       <Line points={[from, to]} color={color} lineWidth={attack ? 1.5 : 1} transparent opacity={attack ? 0.5 : 0.35} />
       {/* 흐름 대시 (공격 시에만) */}
       {attack && (
@@ -427,7 +448,7 @@ export function BattlefieldScene() {
     <Canvas
       dpr={[1, 1.5]}
       camera={{ position: [5.5, 4.6, 7.5], fov: 42 }}
-      gl={{ antialias: true, alpha: true }}
+      gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
       style={{ background: "transparent" }}
     >
       <SceneContent />

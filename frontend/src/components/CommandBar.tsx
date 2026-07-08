@@ -25,19 +25,22 @@ export function CommandBar() {
   const side = round.outcome.winner_side;
 
   return (
-    <header className="relative z-10 flex h-14 shrink-0 items-center gap-4 border-b border-hud/60 bg-surface-1/80 px-4 backdrop-blur-md">
-      {/* 워드마크 */}
-      <div className="flex items-baseline gap-2">
+    <header className="dashboard-bar relative z-10 flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-white/14 px-4 py-2 backdrop-blur-xl lg:flex-nowrap lg:gap-4 lg:py-0 max-[1023px]:px-2">
+      <button
+        onClick={exitToLanding}
+        className="flex min-w-fit items-baseline gap-2 transition-opacity hover:opacity-80 active:scale-[0.98]"
+        aria-label="랜딩 페이지로 돌아가기"
+        title="랜딩 페이지로 돌아가기"
+      >
         <span className="font-display text-base font-bold tracking-[0.06em] text-text-hi">
           DAH FLAWLESS
         </span>
-        <span className="font-display text-[10px] font-semibold uppercase tracking-[0.14em] text-text-low">
+        <span className="font-display text-[10px] font-semibold uppercase tracking-[0.14em] text-text-low max-[1023px]:hidden">
           Combat Replay
         </span>
-      </div>
+      </button>
 
-      {/* 라운드 선택 */}
-      <nav aria-label="라운드 선택" className="flex items-center gap-1">
+      <nav aria-label="라운드 선택" className="flex max-w-[42vw] items-center gap-1 overflow-x-auto lg:max-w-none">
         {replay.rounds.map((r, i) => (
           <button
             key={r.round}
@@ -45,8 +48,8 @@ export function CommandBar() {
             aria-pressed={i === roundIdx}
             className={`h-8 min-w-9 px-2 font-mono text-xs transition-colors ${
               i === roundIdx
-                ? "border border-hud-active bg-surface-2 text-hud-active"
-                : "border border-transparent text-text-mid hover:border-hud hover:text-text-hi"
+                ? "border border-hud-active bg-hud-active/14 text-hud-active shadow-[0_0_18px_rgba(95,212,245,0.16)]"
+                : "border border-transparent text-text-mid hover:border-white/18 hover:bg-white/8 hover:text-text-hi"
             }`}
           >
             R{r.round}
@@ -54,7 +57,6 @@ export function CommandBar() {
         ))}
       </nav>
 
-      {/* 재생 컨트롤 */}
       <div className="flex items-center gap-1">
         <button
           onClick={prev}
@@ -66,7 +68,7 @@ export function CommandBar() {
         <button
           onClick={togglePlay}
           aria-label={playing ? "일시정지" : "재생"}
-          className="flex h-8 w-8 items-center justify-center border border-hud text-hud-active transition-colors hover:border-hud-active active:scale-[0.94]"
+          className="flex h-8 w-8 items-center justify-center border border-hud-active/45 bg-white/6 text-hud-active transition-colors hover:border-hud-active hover:bg-hud-active/12 active:scale-[0.94]"
         >
           {playing ? <Pause size={16} weight="fill" /> : <Play size={16} weight="fill" />}
         </button>
@@ -79,11 +81,10 @@ export function CommandBar() {
         </button>
       </div>
 
-      {/* 타임코드 */}
-      <div className="font-mono text-xs text-text-mid">
+      <div className="font-mono text-xs text-text-mid max-[1023px]:order-5 max-[1023px]:w-full">
         STEP{" "}
         <span className="text-base text-text-hi">
-          {String((step?.step ?? 0)).padStart(2, "0")}
+          {String(step?.step ?? 0).padStart(2, "0")}
         </span>
         <span className="text-text-low"> / {String(total).padStart(2, "0")}</span>
         {step && <span className="ml-3 uppercase text-text-low">{step.phase}</span>}
@@ -91,7 +92,6 @@ export function CommandBar() {
 
       <div className="flex-1" />
 
-      {/* 승패 배지 */}
       <div
         className={`hud-clip border px-3 py-1.5 font-display text-xs font-semibold uppercase tracking-[0.08em] ${WINNER_STYLE[side]}`}
         title={round.outcome.reason}
@@ -99,11 +99,10 @@ export function CommandBar() {
         {side} · {round.outcome.winner_detail}
       </div>
 
-      {/* 런처로 나가기 */}
       <button
         onClick={exitToLanding}
-        aria-label="런처로 나가기"
-        title="런처로 나가기"
+        aria-label="랜딩 페이지로 돌아가기"
+        title="랜딩 페이지로 돌아가기"
         className="flex h-8 w-8 items-center justify-center border border-transparent text-text-low transition-colors hover:border-hud hover:text-text-hi active:scale-[0.94]"
       >
         <SignOut size={15} />

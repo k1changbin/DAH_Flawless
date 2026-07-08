@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Microphone, PaperPlaneRight, X } from "@phosphor-icons/react";
 import { replay, getRound } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 
 /* ---------- Web Speech 최소 타입 ---------- */
 
@@ -38,6 +39,24 @@ type MugyeolState = "idle" | "listening" | "thinking" | "speaking" | "error";
 
 /** 첫 마운트에만 부팅 팝 딜레이 적용 */
 let bootPopDone = false;
+
+const WINDOW_W = 320;
+const WINDOW_H = 410;
+const WINDOW_MARGIN = 16;
+const WINDOW_BOTTOM = 128;
+
+interface WindowPosition {
+  left: number;
+  top: number;
+}
+
+interface DragState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+}
 
 const QUICK_COMMANDS = ["3라운드 보여줘", "공격 뷰", "방어 뷰", "재생", "누가 이겼어"];
 
@@ -98,16 +117,36 @@ function runCommand(text: string): string | null {
   return null;
 }
 
+function defaultWindowPosition(): WindowPosition {
+  return clampWindowPosition({
+    left: window.innerWidth - WINDOW_W - WINDOW_MARGIN,
+    top: window.innerHeight - WINDOW_H - WINDOW_BOTTOM,
+  });
+}
+
+function clampWindowPosition(pos: WindowPosition): WindowPosition {
+  const maxLeft = Math.max(WINDOW_MARGIN, window.innerWidth - WINDOW_W - WINDOW_MARGIN);
+  const maxTop = Math.max(WINDOW_MARGIN, window.innerHeight - WINDOW_H - WINDOW_MARGIN);
+  return {
+    left: Math.min(Math.max(pos.left, WINDOW_MARGIN), maxLeft),
+    top: Math.min(Math.max(pos.top, WINDOW_MARGIN), maxTop),
+  };
+}
+
 export function Mugyeol() {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<MugyeolState>("idle");
   const [transcript, setTranscript] = useState("");
   const [response, setResponse] = useState("안녕하세요, 무결이에요. 리플레이 조작을 도와드릴게요.");
   const [textInput, setTextInput] = useState("");
+  const [windowPos, setWindowPos] = useState<WindowPosition | null>(null);
+  const focus = useReplayStore((s) => s.focus);
+  const sheetMode = useMediaQuery("(max-width: 1023px)");
 
   const recRef = useRef<Recognition | null>(null);
   const blobWrapRef = useRef<HTMLDivElement>(null);
   const audioCleanup = useRef<(() => void) | null>(null);
+  const dragRef = useRef<DragState | null>(null);
   const speechSupported = useRef<boolean | null>(null);
   if (speechSupported.current === null) {
     speechSupported.current = createRecognition() !== null;
@@ -218,6 +257,51 @@ export function Mugyeol() {
     setState("idle");
   }, [stopAudioMeter]);
 
+  const openWindow = useCallback(() => {
+    setWindowPos((pos) => (pos ? clampWindowPosition(pos) : defaultWindowPosition()));
+    setOpen(true);
+  }, []);
+
+  const collapseWindow = useCallback(() => {
+    setOpen(false);
+  }, []);
+
+  const startDrag = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if ((e.target as HTMLElement).closest("[data-no-drag]")) return;
+      if (!windowPos) return;
+      dragRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        startLeft: windowPos.left,
+        startTop: windowPos.top,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [windowPos],
+  );
+
+  const moveDrag = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    setWindowPos(
+      clampWindowPosition({
+        left: drag.startLeft + e.clientX - drag.startX,
+        top: drag.startTop + e.clientY - drag.startY,
+      }),
+    );
+  }, []);
+
+  const endDrag = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  }, []);
+
   // 언마운트/닫힘 정리
   useEffect(() => {
     if (!open) {
@@ -227,6 +311,20 @@ export function Mugyeol() {
       setState("idle");
     }
   }, [open, stopAudioMeter]);
+
+  useEffect(() => {
+    function onResize() {
+      setWindowPos((pos) => (pos ? clampWindowPosition(pos) : pos));
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    if (sheetMode && focus !== null) setOpen(false);
+  }, [focus, sheetMode]);
+
+  if (sheetMode && focus !== null) return null;
 
   const blobStateCls =
     state === "listening" ? "listening" : state === "thinking" ? "thinking" : "";
@@ -244,7 +342,7 @@ export function Mugyeol() {
         {!open && (
           <motion.button
             layoutId="mugyeol-window"
-            onClick={() => setOpen(true)}
+            onClick={openWindow}
             aria-label="무결이 열기"
             className="fixed bottom-32 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-surface-2/80 backdrop-blur-md"
             initial={{ scale: 0 }}
@@ -274,7 +372,11 @@ export function Mugyeol() {
           <motion.div
             layoutId="mugyeol-window"
             transition={{ type: "spring", stiffness: 350, damping: 30 }}
-            className="fixed bottom-32 right-4 z-30 w-80"
+            className="fixed z-30 w-80"
+            style={{
+              left: windowPos?.left ?? `calc(100vw - ${WINDOW_W + WINDOW_MARGIN}px)`,
+              top: windowPos?.top ?? `calc(100vh - ${WINDOW_H + WINDOW_BOTTOM}px)`,
+            }}
           >
             <div
               className="hud-clip p-px"
@@ -284,7 +386,18 @@ export function Mugyeol() {
               }}
             >
               <div className="hud-clip flex flex-col gap-3 bg-surface-1/95 p-4 backdrop-blur-md">
-                <div className="flex items-center justify-between">
+                <div
+                  className="flex cursor-grab select-none items-center justify-between active:cursor-grabbing"
+                  onPointerDown={startDrag}
+                  onPointerMove={moveDrag}
+                  onPointerUp={endDrag}
+                  onPointerCancel={endDrag}
+                  onDoubleClick={collapseWindow}
+                  onClick={(e) => {
+                    if (e.detail >= 2) collapseWindow();
+                  }}
+                  title="Drag to move. Double-click to collapse."
+                >
                   <h2 className="font-display text-[11px] font-semibold uppercase tracking-[0.14em] text-text-hi">
                     무결이
                     <span className="ml-2 font-mono text-[9px] normal-case tracking-normal text-text-low">
@@ -292,7 +405,8 @@ export function Mugyeol() {
                     </span>
                   </h2>
                   <button
-                    onClick={() => setOpen(false)}
+                    data-no-drag
+                    onClick={collapseWindow}
                     aria-label="무결이 닫기"
                     className="text-text-low transition-colors hover:text-text-hi"
                   >

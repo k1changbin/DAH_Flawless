@@ -92,7 +92,9 @@ function ZtaPolicyLane() {
                     title={`${s.step}: ${z?.decision ?? ""}`}
                     className={`h-2.5 flex-1 transition-transform hover:scale-y-125 ${
                       z ? decisionBg(z.decision) : "bg-surface-2"
-                    } ${i === stepIdx ? "outline outline-1 outline-hud-active" : ""}`}
+                    } ${z?.decision === "DENY" ? "deny-pop" : ""} ${
+                      i === stepIdx ? "outline outline-1 outline-hud-active" : ""
+                    }`}
                   />
                 );
               })}
@@ -151,6 +153,7 @@ function EventLog() {
   const round = getRound(roundIdx);
   const step = getStep(roundIdx, stepIdx);
   const attacking = step !== null && step.red_action !== "WAIT" && step.red_action !== "ABORT";
+  const deny = Boolean(step?.zta.some((z) => z.decision === "DENY"));
 
   const events = useMemo(() => {
     const out: LogEvent[] = [];
@@ -173,7 +176,7 @@ function EventLog() {
   }, [round, stepIdx]);
 
   return (
-    <HudFrame title="Event Log" accent={attacking ? "red" : "none"} className="w-64">
+    <HudFrame title="Event Log" accent={attacking || deny ? "red" : "none"} className="w-64">
       <ul className="max-h-32 space-y-0.5 overflow-y-auto p-2" aria-live="polite">
         {events.length === 0 && <li className="font-mono text-[10px] text-text-low">no events</li>}
         {events.map((e, i) => (
@@ -187,6 +190,55 @@ function EventLog() {
   );
 }
 
+function CompactOverlay() {
+  const roundIdx = useReplayStore((s) => s.roundIdx);
+  const stepIdx = useReplayStore((s) => s.stepIdx);
+  const round = getRound(roundIdx);
+  const step = getStep(roundIdx, stepIdx);
+  if (!step) return null;
+
+  const restricted = step.zta.filter((z) => z.restrictive);
+  const defense = step.defense_actions[0];
+
+  return (
+    <div className="grid grid-cols-2 gap-1.5">
+      <HudFrame
+        title="Suspicion"
+        accent={step.detected ? "cyan" : "blue"}
+        className="min-w-0"
+        titleRight={<span className="font-mono text-[10px] text-text-hi">{step.suspicion.toFixed(2)}</span>}
+      >
+        <div className="p-2">
+          <div className="h-1.5 bg-surface-2">
+            <div className="h-full bg-blue-def" style={{ width: `${Math.round(step.suspicion * 100)}%` }} />
+          </div>
+        </div>
+      </HudFrame>
+      <HudFrame title="ZTA" accent={restricted.length ? "red" : "cyan"} className="min-w-0">
+        <div className="flex h-full items-center justify-between gap-2 p-2 font-mono text-[10px]">
+          <span className={restricted.length ? "text-warn" : "text-ok"}>
+            {restricted.length ? `${restricted.length} restricted` : "all clear"}
+          </span>
+          <span className="text-text-low">{step.zta.length} domains</span>
+        </div>
+      </HudFrame>
+      <HudFrame title="Telemetry" className="min-w-0">
+        <div className="grid grid-cols-2 gap-1 p-2 font-mono text-[10px]">
+          <span className="text-text-low">compute</span>
+          <span className="text-right text-text-mid">{step.budgets.blue_compute_budget.toFixed(2)}</span>
+          <span className="text-text-low">power</span>
+          <span className="text-right text-text-mid">{step.budgets.blue_power_budget.toFixed(2)}</span>
+        </div>
+      </HudFrame>
+      <HudFrame title="Event" accent={step.red_action !== "WAIT" ? "red" : "none"} className="min-w-0">
+        <p className="truncate p-2 font-mono text-[10px] text-text-mid">
+          {defense ? defenseLabel(defense) : `${round.attack.name}:${step.red_action}`}
+        </p>
+      </HudFrame>
+    </div>
+  );
+}
+
 /**
  * 창-밖-창 배치 (이미지 #11): 메인 씬 프레임 경계에 걸치는 위성 패널들.
  * 1440px 미만에서는 겹침 오프셋을 줄여 도킹에 가깝게 수렴.
@@ -194,16 +246,19 @@ function EventLog() {
 export function Satellites() {
   return (
     <>
-      <div className="pointer-events-auto absolute -left-3 top-8 z-20 xl:-left-5">
+      <div className="pointer-events-auto absolute left-2 right-2 top-2 z-20 hidden max-[1023px]:block">
+        <CompactOverlay />
+      </div>
+      <div className="pointer-events-auto absolute -left-3 top-8 z-20 max-[1023px]:hidden max-[1439px]:-left-2 max-[1439px]:scale-90 xl:-left-5">
         <SuspicionSparkline />
       </div>
-      <div className="pointer-events-auto absolute -right-3 top-24 z-20 xl:-right-5">
+      <div className="pointer-events-auto absolute -right-3 top-24 z-20 max-[1023px]:hidden max-[1439px]:-right-2 max-[1439px]:scale-90 xl:-right-5">
         <ZtaPolicyLane />
       </div>
-      <div className="pointer-events-auto absolute -left-2 bottom-24 z-20 xl:-left-4">
+      <div className="pointer-events-auto absolute -left-2 bottom-24 z-20 max-[1023px]:hidden max-[1439px]:-left-1 max-[1439px]:scale-90 xl:-left-4">
         <TelemetryFeed />
       </div>
-      <div className="pointer-events-auto absolute -right-2 bottom-10 z-20 xl:-right-4">
+      <div className="pointer-events-auto absolute -right-2 bottom-10 z-20 max-[1023px]:hidden max-[1439px]:-right-1 max-[1439px]:scale-90 xl:-right-4">
         <EventLog />
       </div>
     </>

@@ -30,7 +30,7 @@ export function TimelineLane() {
   return (
     <section
       aria-label="전투 타임라인"
-      className="relative z-10 shrink-0 border-t border-hud/60 bg-surface-1/80 px-4 pb-3 pt-2 backdrop-blur-md"
+      className="dashboard-bar relative z-10 shrink-0 border-t border-white/14 px-4 pb-3 pt-2 backdrop-blur-xl"
     >
       <div className="mb-1.5 flex items-center justify-between">
         <p className="font-display text-[10px] font-semibold uppercase tracking-[0.1em] text-text-low">
@@ -44,7 +44,7 @@ export function TimelineLane() {
       </div>
 
       {/* 스텝 마커 */}
-      <div className="mb-2 flex gap-1" role="group" aria-label="스텝 마커">
+      <div className="mb-2 flex gap-1 overflow-x-auto pb-1" role="group" aria-label="스텝 마커">
         {timeline.map((s, i) => {
           const active = i === stepIdx;
           return (
@@ -53,10 +53,10 @@ export function TimelineLane() {
               onClick={() => setStep(i)}
               aria-label={`스텝 ${s.step}: ${s.phase}`}
               aria-current={active ? "step" : undefined}
-              className={`group flex h-11 flex-1 flex-col items-center justify-between border px-1 py-1 transition-colors ${
+              className={`group flex h-11 min-w-20 flex-1 flex-col items-center justify-between border px-1 py-1 transition-colors lg:min-w-0 ${
                 active
-                  ? "border-hud-active bg-surface-2"
-                  : "border-hud/40 hover:border-hud hover:bg-surface-2/50"
+                  ? "border-hud-active bg-hud-active/14 shadow-[0_0_16px_rgba(95,212,245,0.12)]"
+                  : "border-white/12 bg-white/[0.035] hover:border-white/24 hover:bg-white/8"
               }`}
             >
               <span
