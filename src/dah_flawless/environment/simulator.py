@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from dah_flawless.attacks.mutations import apply_attack
 from dah_flawless.attacks.red_agent import RedAgent
@@ -65,6 +65,7 @@ def run_simulation(
     memory_compaction_interval: int = 0,
     memory_proxy_size: int = 12,
     memory_path: Path | None = None,
+    round_callback: Callable[[dict, list[dict]], None] | None = None,
 ) -> tuple[list[dict], dict]:
     if memory_compaction_interval < 0:
         raise ValueError("memory_compaction_interval must be >= 0")
@@ -271,6 +272,8 @@ def run_simulation(
             memory_snapshots.append(memory_event)
             if memory_path is not None:
                 write_memory_snapshot(memory_path, memory_snapshot)
+        if round_callback is not None:
+            round_callback(entry, logs)
         prev_hash = entry["this_hash"]
         threat_history.append(threats)
         recovery_history.append(
