@@ -139,6 +139,21 @@ input[type="range"].scrubber:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px rgba(95, 212, 245, 0.4);
 }
 
+/* 노드 호버 콜아웃 등장 */
+@keyframes callout-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.callout-in {
+  animation: callout-in 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
 /* 포커스 링 (접근성) */
 button:focus-visible,
 [role="button"]:focus-visible {

@@ -45,6 +45,14 @@ export interface ZtaStepDecision {
   reasons: string[];
 }
 
+/** R2+에서 확인된 실물: 객체 배열. 초기 라운드는 빈 배열. */
+export interface DefenseAction {
+  action: string;
+  cost: number;
+  status: string;
+  target: string;
+}
+
 export interface StepBudgets {
   blue_compute_budget: number;
   blue_defense_steps: number;
@@ -65,10 +73,11 @@ export interface TimelineStep {
   blue_action: BlueAction;
   detected: boolean;
   suspicion: number;
-  defense_actions: string[];
+  defense_actions: Array<DefenseAction | string>;
   changed_path_count: number;
   changed_paths: string[];
-  delta: { applied: Record<string, number>; requested: Record<string, number> };
+  /** WAIT 등 일부 스텝에서 null (실데이터 검증됨) */
+  delta: { applied: Record<string, number> | null; requested: Record<string, number> | null } | null;
   budgets: StepBudgets;
   score: Record<string, unknown>;
   zta: ZtaStepDecision[];

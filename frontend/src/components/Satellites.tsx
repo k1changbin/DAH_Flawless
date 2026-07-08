@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { HudFrame } from "./HudFrame";
+import { defenseLabel } from "./SidePanel";
 import { getRound, getStep } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
 import type { ZtaDecision, ZtaDomain } from "../types/replay";
@@ -158,7 +159,7 @@ function EventLog() {
         out.push({ step: s.step, text: `RED ${s.red_action}`, cls: "text-red-ops" });
       if (s.detected) out.push({ step: s.step, text: "BLUE DETECTED", cls: "text-hud-active" });
       s.defense_actions.forEach((a) =>
-        out.push({ step: s.step, text: `DEF ${a}`, cls: "text-ok" }),
+        out.push({ step: s.step, text: `DEF ${defenseLabel(a)}`, cls: "text-ok" }),
       );
       const restricted = s.zta.filter((z) => z.restrictive);
       if (restricted.length > 0)

@@ -1,4 +1,4 @@
-import { Pause, Play, SkipBack, SkipForward } from "@phosphor-icons/react";
+import { Pause, Play, SignOut, SkipBack, SkipForward } from "@phosphor-icons/react";
 import { replay, getRound, getStep } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
 import type { WinnerSide } from "../types/replay";
@@ -17,6 +17,7 @@ export function CommandBar() {
   const togglePlay = useReplayStore((s) => s.togglePlay);
   const next = useReplayStore((s) => s.next);
   const prev = useReplayStore((s) => s.prev);
+  const exitToLanding = useReplayStore((s) => s.exitToLanding);
 
   const round = getRound(roundIdx);
   const step = getStep(roundIdx, stepIdx);
@@ -97,6 +98,16 @@ export function CommandBar() {
       >
         {side} · {round.outcome.winner_detail}
       </div>
+
+      {/* 런처로 나가기 */}
+      <button
+        onClick={exitToLanding}
+        aria-label="런처로 나가기"
+        title="런처로 나가기"
+        className="flex h-8 w-8 items-center justify-center border border-transparent text-text-low transition-colors hover:border-hud hover:text-text-hi active:scale-[0.94]"
+      >
+        <SignOut size={15} />
+      </button>
     </header>
   );
 }

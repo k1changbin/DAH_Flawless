@@ -28,6 +28,21 @@ page.on("pageerror", (err) => errors.push(String(err)));
 await page.goto("file:///" + dist.replace(/\\/g, "/"));
 await page.waitForTimeout(2500);
 
+// 랜딩 스크린샷이 아니면 자동 진입
+if (!args.includes("--landing")) {
+  const enterBtn = page.locator("text=시뮬레이션 진입");
+  if ((await enterBtn.count()) > 0) {
+    await enterBtn.click();
+    await page.waitForTimeout(1800);
+  }
+}
+
+const roundArg = argValue("--round");
+if (roundArg) {
+  await page.click(`text=R${roundArg}`);
+  await page.waitForTimeout(400);
+}
+
 const step = argValue("--step");
 if (step !== null) {
   for (let i = 0; i < Number(step); i++) {
@@ -39,6 +54,13 @@ if (step !== null) {
 const focus = argValue("--focus");
 if (focus) {
   await page.click(`[data-side="${focus}"] button`);
+  await page.waitForTimeout(700);
+}
+
+const hover = argValue("--hover");
+if (hover) {
+  const [hx, hy] = hover.split(",").map(Number);
+  await page.mouse.move(hx, hy);
   await page.waitForTimeout(700);
 }
 

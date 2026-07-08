@@ -2,7 +2,14 @@ import { motion, AnimatePresence } from "motion/react";
 import { CaretLeft, CaretRight, ShieldCheck, Crosshair } from "@phosphor-icons/react";
 import { getRound, getStep } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
-import type { TimelineStep, ZtaDecision } from "../types/replay";
+import type { DefenseAction, TimelineStep, ZtaDecision } from "../types/replay";
+
+/** defense_actions는 문자열/객체 혼재 가능 (실데이터 검증됨) */
+export function defenseLabel(a: DefenseAction | string): string {
+  if (typeof a === "string") return a;
+  const target = a.target ? ` ${a.target.split(".").pop()}` : "";
+  return `${a.action}${target} [${a.status}]`;
+}
 
 const SPRING = { type: "spring", stiffness: 300, damping: 32 } as const;
 
@@ -125,6 +132,9 @@ function RedContent({ step, expanded }: { step: TimelineStep | null; expanded: b
             <>
               <section className="space-y-1.5">
                 <Label>Applied Delta</Label>
+                {!step.delta?.applied || Object.keys(step.delta.applied).length === 0 ? (
+                  <p className="font-mono text-[11px] text-text-low">no mutation this step</p>
+                ) : (
                 <ul className="space-y-0.5">
                   {Object.entries(step.delta.applied).map(([k, v]) => (
                     <li key={k} className="flex justify-between font-mono text-[11px]">
@@ -136,6 +146,7 @@ function RedContent({ step, expanded }: { step: TimelineStep | null; expanded: b
                     </li>
                   ))}
                 </ul>
+                )}
               </section>
 
               <section className="space-y-1.5">
@@ -220,8 +231,8 @@ function BlueContent({ step, expanded }: { step: TimelineStep | null; expanded: 
             {step.defense_actions.length > 0 ? (
               <ul className="space-y-0.5">
                 {step.defense_actions.map((a, i) => (
-                  <li key={i} className="font-mono text-[11px] text-ok">
-                    {a}
+                  <li key={i} className="truncate font-mono text-[11px] text-ok">
+                    {defenseLabel(a)}
                   </li>
                 ))}
               </ul>

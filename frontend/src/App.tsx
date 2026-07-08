@@ -1,17 +1,19 @@
 import { useEffect } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { CommandBar } from "./components/CommandBar";
 import { SidePanel } from "./components/SidePanel";
 import { CenterScene } from "./components/CenterScene";
 import { Satellites } from "./components/Satellites";
 import { TimelineLane } from "./components/TimelineLane";
 import { Mugyeol } from "./components/Mugyeol";
+import { Landing } from "./components/Landing";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useReplayStore } from "./store/useReplayStore";
 
 const PLAY_INTERVAL_MS = 1100;
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
-export default function App() {
+function Dashboard() {
   const playing = useReplayStore((s) => s.playing);
   const reduce = useReducedMotion();
 
@@ -59,12 +61,13 @@ export default function App() {
         };
 
   return (
-    <div className="flex h-full flex-col">
-      <motion.div
-        className="bg-battle-grid"
-        aria-hidden
-        {...(reduce ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.4 } })}
-      />
+    <motion.div
+      className="flex h-full flex-col"
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
       <motion.div {...boot(0.15, { y: -8 })}>
         <CommandBar />
       </motion.div>
@@ -93,6 +96,21 @@ export default function App() {
         <TimelineLane />
       </motion.div>
       <Mugyeol />
-    </div>
+    </motion.div>
+  );
+}
+
+export default function App() {
+  const entered = useReplayStore((s) => s.entered);
+
+  return (
+    <ErrorBoundary>
+      <div className="h-full">
+        <div className="bg-battle-grid" aria-hidden />
+        <AnimatePresence mode="wait">
+          {entered ? <Dashboard key="dashboard" /> : <Landing key="landing" />}
+        </AnimatePresence>
+      </div>
+    </ErrorBoundary>
   );
 }

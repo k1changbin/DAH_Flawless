@@ -4,10 +4,14 @@ import { replay } from "../data";
 export type Focus = "RED" | "BLUE" | null;
 
 interface ReplayState {
+  entered: boolean;
   roundIdx: number;
   stepIdx: number;
   playing: boolean;
   focus: Focus;
+
+  enter: () => void;
+  exitToLanding: () => void;
 
   setRound: (idx: number) => void;
   setStep: (idx: number) => void;
@@ -24,10 +28,14 @@ function stepCount(roundIdx: number): number {
 }
 
 export const useReplayStore = create<ReplayState>((set, get) => ({
+  entered: false,
   roundIdx: 0,
   stepIdx: 0,
   playing: false,
   focus: null,
+
+  enter: () => set({ entered: true }),
+  exitToLanding: () => set({ entered: false, playing: false, focus: null }),
 
   setRound: (idx) => {
     if (idx < 0 || idx >= replay.rounds.length) return;

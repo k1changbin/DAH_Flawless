@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { Grid, Html, Line, OrbitControls } from "@react-three/drei";
 import type { Group, Mesh, MeshBasicMaterial } from "three";
 import { MathUtils } from "three";
 import { getRound, getStep } from "../../data";
 import { useReplayStore } from "../../store/useReplayStore";
-import type { ZtaDomain } from "../../types/replay";
+import type { TimelineStep, ZtaDomain, ZtaStepDecision } from "../../types/replay";
 
 /* 팔레트 (index.css 토큰과 동일 값) */
 const C = {
@@ -24,12 +24,14 @@ interface AssetDef {
   domain: ZtaDomain;
   pos: [number, number, number];
   kind: "satcom" | "uav" | "ugv";
+  /** 콜아웃 배치 (UGV는 우하단 EVENT LOG와 겹쳐서 위로) */
+  callout: "right" | "top";
 }
 
 const ASSETS: AssetDef[] = [
-  { id: "SATCOM", domain: "command", pos: [0, 3.1, -1.6], kind: "satcom" },
-  { id: "UAV", domain: "telemetry", pos: [-2.7, 1.7, 0.9], kind: "uav" },
-  { id: "UGV", domain: "mission", pos: [2.5, 0.4, 1.7], kind: "ugv" },
+  { id: "SATCOM", domain: "command", pos: [0, 3.1, -1.6], kind: "satcom", callout: "right" },
+  { id: "UAV", domain: "telemetry", pos: [-2.7, 1.7, 0.9], kind: "uav", callout: "right" },
+  { id: "UGV", domain: "mission", pos: [2.5, 0.4, 1.7], kind: "ugv", callout: "top" },
 ];
 
 const REDUCED_MOTION =
@@ -49,17 +51,94 @@ function useLinkStates() {
       telemetry: { attack: false, restricted: false },
       mission: { attack: false, restricted: false },
     };
-    if (!step) return { states, detected: false };
+    if (!step) return { states, detected: false, step: null as TimelineStep | null };
     const attacking = step.red_action !== "WAIT" && step.red_action !== "ABORT";
     if (attacking) states[round.attack.target_domain].attack = true;
     for (const z of step.zta) {
       if (z.restrictive) states[z.domain].restricted = true;
     }
-    return { states, detected: step.detected };
+    return { states, detected: step.detected, step: step as TimelineStep | null };
   }, [round, step]);
 }
 
-function AssetNode({ def, underAttack }: { def: AssetDef; underAttack: boolean }) {
+/** e71 레퍼런스: 리더 라인으로 연결된 HUD 콜아웃 */
+function NodeCallout({
+  def,
+  zta,
+  attack,
+  restricted,
+}: {
+  def: AssetDef;
+  zta: ZtaStepDecision | undefined;
+  attack: boolean;
+  restricted: boolean;
+}) {
+  const status = attack ? "ATTACK" : restricted ? "RESTRICTED" : "NOMINAL";
+  const statusCls = attack ? "text-red-ops" : restricted ? "text-warn" : "text-ok";
+  const card = (
+    <div className="hud-clip bg-hud-active p-px">
+          <div className="hud-clip space-y-1.5 bg-surface-1/95 p-2.5 backdrop-blur-md">
+            <div className="flex items-baseline justify-between">
+              <span className={`font-display text-[11px] font-bold tracking-[0.1em] ${attack ? "text-red-ops" : "text-hud-active"}`}>
+                {def.id}
+              </span>
+              <span className="font-mono text-[9px] uppercase text-text-low">{def.domain}</span>
+            </div>
+            <div className="flex justify-between font-mono text-[10px]">
+              <span className="text-text-low">zta</span>
+              <span className="text-text-mid">{zta?.decision ?? "--"}</span>
+              <span className="text-text-hi">{zta ? zta.trust_score.toFixed(2) : "--"}</span>
+            </div>
+            <div className="flex justify-between font-mono text-[10px]">
+              <span className="text-text-low">status</span>
+              <span className={statusCls}>{status}</span>
+            </div>
+            {zta && zta.reasons.length > 0 && (
+              <p className="truncate font-mono text-[9px] text-text-low">{zta.reasons[0]}</p>
+            )}
+          </div>
+        </div>
+  );
+
+  if (def.callout === "top") {
+    return (
+      <Html position={[0, 0.95, 0]} center zIndexRange={[40, 0]} style={{ pointerEvents: "none" }}>
+        <div className="callout-in flex flex-col items-center" style={{ transform: "translateY(-58%)" }}>
+          <div style={{ width: 196 }}>{card}</div>
+          <div className="h-5 w-px bg-hud-active" />
+        </div>
+      </Html>
+    );
+  }
+
+  return (
+    <Html position={[0.3, 0.5, 0]} zIndexRange={[40, 0]} style={{ pointerEvents: "none" }}>
+      <div className="callout-in" style={{ transformOrigin: "left bottom" }}>
+        <div
+          className="h-px w-9 bg-hud-active"
+          style={{ transform: "rotate(-30deg)", transformOrigin: "left center" }}
+        />
+        <div style={{ marginLeft: 32, marginTop: -6, width: 196 }}>{card}</div>
+      </div>
+    </Html>
+  );
+}
+
+function AssetNode({
+  def,
+  underAttack,
+  restricted,
+  zta,
+  hovered,
+  onHover,
+}: {
+  def: AssetDef;
+  underAttack: boolean;
+  restricted: boolean;
+  zta: ZtaStepDecision | undefined;
+  hovered: boolean;
+  onHover: (id: string | null) => void;
+}) {
   const group = useRef<Group>(null);
   const phase = useMemo(() => Math.random() * Math.PI * 2, []);
 
@@ -75,7 +154,23 @@ function AssetNode({ def, underAttack }: { def: AssetDef; underAttack: boolean }
   const color = underAttack ? C.red : C.hudActive;
 
   return (
-    <group ref={group} position={def.pos}>
+    <group
+      ref={group}
+      position={def.pos}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        onHover(def.id);
+      }}
+      onPointerOut={(e) => {
+        e.stopPropagation();
+        onHover(null);
+      }}
+    >
+      {/* 호버 히트 영역 (보이지 않음) */}
+      <mesh visible={false}>
+        <sphereGeometry args={[0.6]} />
+        <meshBasicMaterial />
+      </mesh>
       {def.kind === "satcom" && (
         <mesh>
           <octahedronGeometry args={[0.34]} />
@@ -113,6 +208,7 @@ function AssetNode({ def, underAttack }: { def: AssetDef; underAttack: boolean }
           {def.id}
         </div>
       </Html>
+      {hovered && <NodeCallout def={def} zta={zta} attack={underAttack} restricted={restricted} />}
     </group>
   );
 }
@@ -207,7 +303,15 @@ function SceneRig({ children }: { children: React.ReactNode }) {
 }
 
 function SceneContent() {
-  const { states, detected } = useLinkStates();
+  const { states, detected, step } = useLinkStates();
+  const [hoverId, setHoverId] = useState<string | null>(null);
+
+  useEffect(() => {
+    document.body.style.cursor = hoverId ? "pointer" : "";
+    return () => {
+      document.body.style.cursor = "";
+    };
+  }, [hoverId]);
 
   return (
     <SceneRig>
@@ -254,7 +358,14 @@ function SceneContent() {
       {/* 자산 노드 + 링크 */}
       {ASSETS.map((a) => (
         <group key={a.id}>
-          <AssetNode def={a} underAttack={states[a.domain].attack} />
+          <AssetNode
+            def={a}
+            underAttack={states[a.domain].attack}
+            restricted={states[a.domain].restricted}
+            zta={step?.zta.find((z) => z.domain === a.domain)}
+            hovered={hoverId === a.id}
+            onHover={setHoverId}
+          />
           <DomainLink
             from={a.pos}
             to={C2_POS}
