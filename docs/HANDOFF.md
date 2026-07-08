@@ -17,6 +17,13 @@
 - 구현물: 커맨드 바(라운드/재생/승패), RED-BLUE 듀얼 패널 스프링 스위칭(레일 축소·확장 상세·키보드 접근), R3F 3D 전장 씬(SATCOM/UAV/UGV/C2 노드, 공격 대시 흐름 라인, 탐지 링 펄스, 포커스 카메라 도브, WebGL 폴백), 위성 창 4종(창-밖-창: suspicion 스파크라인·ZTA 정책 레인·텔레메트리·이벤트 로그), 무결이(오로라 블롭, Web Speech ko-KR 명령 매핑, TTS, 볼륨 반응 꿈틀, 텍스트 폴백), 부팅 스태거 시퀀스, prefers-reduced-motion 전역.
 - 키보드: Space 재생, ←/→ 스텝, Esc 포커스 해제.
 
+### 2026-07-08 추가분 (커밋 508d1e2)
+
+- **랜딩 페이지**: 게임 런처식 스플릿 히어로 (`Landing.tsx`). 좌 RED/우 BLUE 호버 밀당, "시뮬레이션 진입" CTA → 대시보드 부팅 시퀀스, 커맨드 바 우측 SignOut 버튼으로 복귀. 상태는 store `entered/enter/exitToLanding`.
+- **먹통(남색 빈 화면) 버그 2건 해결**: ① R2+에서 `defense_actions`가 객체 배열({action,cost,status,target})이라 React error #31 크래시 → `defenseLabel()` 포매터(SidePanel.tsx, Satellites에서 재사용). ② WAIT 스텝에서 `delta.applied`가 null → RED 확장 패널 가드. 재발 방지로 `ErrorBoundary.tsx`(HUD 폴트 패널) 추가. **교훈: 이 JSON은 라운드마다 필드 형태가 달라질 수 있으니 새 필드 소비 전 6라운드 전체 스캔 필수.**
+- **노드 호버 콜아웃**: e71 레퍼런스 스타일 리더 라인+HUD 카드 (`NodeCallout` in BattlefieldScene.tsx). 자산별 `callout: "right"|"top"` 배치(UGV는 EVENT LOG 겹침 회피로 top). 보이지 않는 히트 스피어로 호버 판정.
+- verify.mjs 확장: 랜딩 자동 진입, `--landing`, `--round N`, `--hover "x,y"`.
+
 ### 남은 폴리시 (다음 세션 후보, 스펙 대비 미완)
 
 1. 위성 창 드래그 이동·더블클릭 접기 (스펙 4.1 선택 항목)
