@@ -37,6 +37,8 @@ outputs/
 reports/
 *.zip
 data/
+tmp/
+!tmp/.gitkeep
 tmp/world/
 
 # Local tool config / review artifacts (not shared team assets)

@@ -47,6 +47,8 @@ class RedAgent:
         self._mutation_profile = mutation_profile
         self._weights = {attack.name: attack.weight for attack in realistic_attacks()}
         self._goal_stats = default_goal_stats()
+        self._attack_reward_ema = {attack.name: 0.45 for attack in realistic_attacks()}
+        self._global_reward_ema = 0.45
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
         self._tactic_exploration_rate = DEFAULT_TACTIC_EXPLORATION_RATE
@@ -188,8 +190,27 @@ class RedAgent:
     ) -> dict:
         before = self._weights.get(attack_name, 0.0)
         before_probe_delta = self._telemetry_probe_delta
+        before_attack_reward_ema = self._attack_reward_ema.get(attack_name, self._global_reward_ema)
+        before_global_reward_ema = self._global_reward_ema
         goal_update = None
-        proposed_weight = _proposed_attack_weight(before, detected=detected, score=score)
+        reward_context = _red_reward_context(
+            score,
+            detected=detected,
+            baseline_reward=before_global_reward_ema,
+        )
+        proposed_weight = _proposed_attack_weight(
+            before,
+            detected=detected,
+            score=score,
+            baseline_reward=before_global_reward_ema,
+            reward_context=reward_context,
+        )
+        proposed_attack_reward_ema = _ema(before_attack_reward_ema, reward_context["red_learning_reward"], alpha=0.22)
+        proposed_global_reward_ema = _ema(
+            before_global_reward_ema,
+            reward_context["red_learning_reward"],
+            alpha=0.08,
+        )
         proposed_probe_delta = before_probe_delta
         if attack_name == "TELEMETRY_FDI":
             if detected:
@@ -200,14 +221,39 @@ class RedAgent:
         reviewed, review_log = self._policy_update_reviewer.review_update(
             agent="RedAgent",
             update_name="attack_weight",
-            before={"weight": before, "telemetry_probe_delta": before_probe_delta},
-            proposed={"weight": proposed_weight, "telemetry_probe_delta": proposed_probe_delta},
+            before={
+                "weight": before,
+                "telemetry_probe_delta": before_probe_delta,
+                "attack_reward_ema": before_attack_reward_ema,
+                "global_reward_ema": before_global_reward_ema,
+            },
+            proposed={
+                "weight": proposed_weight,
+                "telemetry_probe_delta": proposed_probe_delta,
+                "attack_reward_ema": proposed_attack_reward_ema,
+                "global_reward_ema": proposed_global_reward_ema,
+            },
             context={
                 "attack_name": attack_name,
                 "detected": detected,
                 "goal_success": getattr(score, "goal_success", None) if score is not None else None,
                 "goal_reward": getattr(score, "goal_reward", None) if score is not None else None,
                 "winner_detail": getattr(score, "winner_detail", None) if score is not None else None,
+                "winner_side": getattr(score, "winner_side", None) if score is not None else None,
+                "containment_score": getattr(score, "containment_score", None) if score is not None else None,
+                "attempted_effect_success": getattr(score, "attempted_effect_success", None)
+                if score is not None
+                else None,
+                "pre_defense_goal_success": getattr(score, "pre_defense_goal_success", None)
+                if score is not None
+                else None,
+                "post_defense_effective_breach": getattr(score, "post_defense_effective_breach", None)
+                if score is not None
+                else None,
+                "blue_recovered": getattr(score, "blue_recovered", None) if score is not None else None,
+                "red_learning_reward": reward_context["red_learning_reward"],
+                "baseline_reward": reward_context["baseline_reward"],
+                "relative_advantage": reward_context["relative_advantage"],
                 "agent_family": "red_probe",
                 "stealth_mode": self._stealth_mode,
             },
@@ -216,6 +262,9 @@ class RedAgent:
         after = float(reviewed["weight"])
         self._weights[attack_name] = after
         self._telemetry_probe_delta = int(reviewed["telemetry_probe_delta"])
+        self._attack_reward_ema[attack_name] = float(reviewed.get("attack_reward_ema", proposed_attack_reward_ema))
+        self._global_reward_ema = float(reviewed.get("global_reward_ema", proposed_global_reward_ema))
+        self._restore_relative_floor_if_saturated()
         # Adaptive stealth: once an attack is detected, retry it quietly.
         if self._stealth_mode == "adaptive" and detected:
             self._stealth_for.add(attack_name)
@@ -227,8 +276,11 @@ class RedAgent:
             "attack_detected" if detected else "attack_not_detected",
             before={"weight": before, "telemetry_probe_delta": before_probe_delta},
             after={
-                "weight": after,
+                "weight": self._weights[attack_name],
                 "telemetry_probe_delta": self._telemetry_probe_delta,
+                "red_learning_reward": reward_context,
+                "attack_reward_ema": self._attack_reward_ema[attack_name],
+                "global_reward_ema": self._global_reward_ema,
                 "policy_update_review": review_log,
                 "goal_feedback": goal_update,
             },
@@ -248,10 +300,18 @@ class RedAgent:
             self._tactic_exploration_rate = float(policy_state["tactic_exploration_rate"])
         if "goal_stats" in policy_state:
             self._goal_stats = normalize_goal_stats(policy_state["goal_stats"])
+        reward_ema = policy_state.get("attack_reward_ema") or policy_state.get("reward_ema") or {}
+        for attack_name in self._attack_reward_ema:
+            if attack_name in reward_ema:
+                self._attack_reward_ema[attack_name] = float(reward_ema[attack_name])
+        if "global_reward_ema" in policy_state:
+            self._global_reward_ema = float(policy_state["global_reward_ema"])
 
     def export_policy_state(self) -> dict:
         return {
             "weights": dict(sorted(self._weights.items())),
+            "attack_reward_ema": dict(sorted(self._attack_reward_ema.items())),
+            "global_reward_ema": round(self._global_reward_ema, 4),
             "goal_stats": deepcopy_sorted_goal_stats(self._goal_stats),
             "stealth_for": sorted(self._stealth_for),
             "telemetry_probe_delta": self._telemetry_probe_delta,
@@ -259,6 +319,16 @@ class RedAgent:
             "stealth_mode": self._stealth_mode,
             "mutation_profile": self._mutation_profile,
         }
+
+    def _restore_relative_floor_if_saturated(self) -> None:
+        if not self._weights or any(weight > 1.0001 for weight in self._weights.values()):
+            return
+        min_reward = min(self._attack_reward_ema.values())
+        max_reward = max(self._attack_reward_ema.values())
+        if max_reward - min_reward < 0.02:
+            return
+        for attack_name, reward in self._attack_reward_ema.items():
+            self._weights[attack_name] = round(1.0 + max(0.0, reward - min_reward) * 2.0, 4)
 
 
 def _tag_context(tags: list[str], tag_details: list[SituationTag] | None) -> dict:
@@ -272,36 +342,126 @@ def deepcopy_sorted_goal_stats(goal_stats: dict) -> dict:
     return {goal_id: dict(goal_stats[goal_id]) for goal_id in sorted(goal_stats)}
 
 
-def _proposed_attack_weight(before: float, *, detected: bool, score) -> float:
+def _proposed_attack_weight(
+    before: float,
+    *,
+    detected: bool,
+    score,
+    baseline_reward: float = 0.45,
+    reward_context: dict | None = None,
+) -> float:
     if score is None:
         return max(1.0, before - 0.5) if detected else before + 0.5
 
-    goal_reward = float(getattr(score, "goal_reward", 0.0))
-    goal_success = bool(getattr(score, "goal_success", False))
+    reward_context = reward_context or _red_reward_context(score, detected=detected, baseline_reward=baseline_reward)
+    relative_advantage = float(reward_context["relative_advantage"])
+    attempted_effect = bool(getattr(score, "attempted_effect_success", getattr(score, "attack_success", False)))
+    pre_defense_goal_success = bool(
+        getattr(score, "pre_defense_goal_success", getattr(score, "goal_success", False))
+    )
+    post_defense_effective_breach = bool(getattr(score, "post_defense_effective_breach", False))
     winner_detail = getattr(score, "winner_detail", None)
     winner = getattr(score, "winner", None)
     attrition = getattr(score, "evidence", {}).get("attrition", {}) if score is not None else {}
     attrition_cost_effective = bool(attrition.get("cost_effective", True))
 
-    delta = -0.20 if detected else 0.12
-    delta += 0.55 * (goal_reward - 0.45)
-    delta += 0.22 if goal_success else -0.22
+    delta = 0.70 * relative_advantage
+    if attempted_effect:
+        delta += 0.04
+    else:
+        delta -= 0.08
+    if pre_defense_goal_success:
+        delta += 0.05
+    if post_defense_effective_breach:
+        delta += 0.08
 
     if winner == "RED_BREACH":
-        delta += 0.18
+        delta += 0.12
     elif winner == "RED_ATTRITION":
-        delta += 0.16 if attrition_cost_effective else -0.14
+        delta += 0.10 if attrition_cost_effective else -0.10
     elif winner == "BLUE_RECOVERY":
-        delta -= 0.24
+        delta -= 0.08
     elif winner == "BLUE":
-        delta -= 0.12
+        delta -= 0.04
 
     if winner_detail == "PARTIAL_BREACH":
-        delta -= 0.18
+        delta -= 0.06
     elif winner_detail in {"NO_EFFECT", "FALSE_POSITIVE"}:
-        delta -= 0.12
+        delta -= 0.10
 
+    delta = max(-0.35, min(0.35, delta))
     return max(1.0, round(before + delta, 4))
+
+
+def _red_reward_context(score, *, detected: bool, baseline_reward: float) -> dict:
+    if score is None:
+        reward = 0.28 if detected else 0.56
+        return {
+            "red_learning_reward": reward,
+            "baseline_reward": round(float(baseline_reward), 4),
+            "relative_advantage": round(reward - float(baseline_reward), 4),
+            "algorithm": "relative_red_reward_v2_no_score",
+        }
+
+    goal_reward = float(getattr(score, "goal_reward", 0.0))
+    mission_impact = float(getattr(score, "evidence", {}).get("mission_impact", {}).get("mission_impact_score", 0.0))
+    containment_score = float(getattr(score, "containment_score", 0.0))
+    attempted_effect = bool(getattr(score, "attempted_effect_success", getattr(score, "attack_success", False)))
+    pre_defense_goal_success = bool(
+        getattr(score, "pre_defense_goal_success", getattr(score, "goal_success", False))
+    )
+    post_defense_effective_breach = bool(getattr(score, "post_defense_effective_breach", False))
+    blue_recovered = bool(getattr(score, "blue_recovered", getattr(score, "recovery_success", False)))
+    winner_side = getattr(score, "winner_side", None)
+    winner = getattr(score, "winner", None)
+    winner_detail = getattr(score, "winner_detail", None)
+    attrition = getattr(score, "evidence", {}).get("attrition", {})
+    attrition_cost_effective = bool(attrition.get("cost_effective", False))
+
+    reward = 0.05 + 0.45 * goal_reward + 0.15 * mission_impact
+    if attempted_effect:
+        reward += 0.07
+    if pre_defense_goal_success:
+        reward += 0.10
+    if post_defense_effective_breach:
+        reward += 0.14
+    if winner_side == "RED":
+        reward += 0.10
+    if winner == "RED_ATTRITION" and attrition_cost_effective:
+        reward += 0.08
+
+    if detected and containment_score >= 0.80:
+        reward -= 0.12
+    elif detected and containment_score >= 0.55:
+        reward -= 0.07
+    elif detected:
+        reward -= 0.03
+    if blue_recovered and not post_defense_effective_breach:
+        reward -= 0.04
+    if winner_detail == "RECOVERY":
+        reward -= 0.04
+    elif winner_detail in {"NO_EFFECT", "FALSE_POSITIVE"}:
+        reward -= 0.08
+
+    reward = round(min(1.0, max(0.0, reward)), 4)
+    baseline = round(float(baseline_reward), 4)
+    return {
+        "red_learning_reward": reward,
+        "baseline_reward": baseline,
+        "relative_advantage": round(reward - baseline, 4),
+        "goal_reward": round(goal_reward, 4),
+        "mission_impact_score": round(mission_impact, 4),
+        "containment_score": round(containment_score, 4),
+        "attempted_effect_success": attempted_effect,
+        "pre_defense_goal_success": pre_defense_goal_success,
+        "post_defense_effective_breach": post_defense_effective_breach,
+        "blue_recovered": blue_recovered,
+        "algorithm": "relative_red_reward_v2",
+    }
+
+
+def _ema(before: float, value: float, *, alpha: float) -> float:
+    return round((1.0 - alpha) * float(before) + alpha * float(value), 4)
 
 
 def _recent_tactics(previous_logs: list[dict], attack_name: str, window: int = 5) -> list[str]:

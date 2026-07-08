@@ -43,7 +43,7 @@ def infer_goal_effect_threats(
     capabilities = capabilities or {}
     hypotheses: list[dict] = []
 
-    _maybe_add_telemetry_trust_erosion(hypotheses, obs, capabilities)
+    _maybe_add_telemetry_trust_erosion(hypotheses, obs, tag_set, capabilities)
     _maybe_add_wrong_target_selection(hypotheses, obs, history)
     _maybe_add_command_stale_acceptance(hypotheses, obs, history, tag_set, capabilities)
     _maybe_add_ack_causal_confusion(hypotheses, obs, tag_set, capabilities)
@@ -75,7 +75,12 @@ def merge_goal_effect_threats(base_threats: list[Threat], effect_threats: list[T
     return [merged[target] for target in order]
 
 
-def _maybe_add_telemetry_trust_erosion(hypotheses: list[dict], obs: dict, capabilities: dict) -> None:
+def _maybe_add_telemetry_trust_erosion(
+    hypotheses: list[dict],
+    obs: dict,
+    tag_set: set[str],
+    capabilities: dict,
+) -> None:
     internal = obs.get("internal_observe", {}).get("telemetry", {})
     external = obs.get("telemetry", {})
     if not internal or not external:
@@ -86,22 +91,43 @@ def _maybe_add_telemetry_trust_erosion(hypotheses: list[dict], obs: dict, capabi
     drain_mismatch = abs(
         float(external.get("battery_drain_rate", 0.0)) - float(internal.get("battery_drain_rate", 0.0))
     )
+    internal_safety_critical = float(internal.get("battery_percent", 100.0)) <= 25.0 or internal.get("motor_status") != "OK"
+    external_looks_safer = (
+        float(external.get("battery_percent", 0.0)) > float(internal.get("battery_percent", 0.0)) + 1.0
+        or (external.get("motor_status") == "OK" and internal.get("motor_status") != "OK")
+    )
     effect_score = min(1.0, battery_delta / 35.0 + (0.25 if motor_mismatch else 0.0) + min(0.20, drain_mismatch / 5.0))
+    if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in tag_set and internal_safety_critical and external_looks_safer:
+        effect_score = max(effect_score, min(1.0, 0.48 + battery_delta / 18.0 + (0.12 if motor_mismatch else 0.0)))
+    if "TELEMETRY_SERIAL_DRIFT" in tag_set:
+        effect_score = max(effect_score, min(1.0, 0.42 + battery_delta / 22.0))
     if effect_score < 0.22:
         return
 
     confidence = (0.58 + effect_score * 0.36) * _capability_factor(capabilities, "cross_check_telemetry")
+    if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in tag_set:
+        confidence += 0.08
     _add_hypothesis(
         hypotheses,
         goal_id="TELEMETRY_TRUST_EROSION",
         target="telemetry",
         confidence=confidence,
-        tags=("EFFECT_TELEMETRY_TRUST_EROSION", "INTERNAL_EXTERNAL_TELEMETRY_DISAGREE"),
+        tags=tuple(
+            sorted(
+                {
+                    "EFFECT_TELEMETRY_TRUST_EROSION",
+                    "INTERNAL_EXTERNAL_TELEMETRY_DISAGREE",
+                    *({"TELEMETRY_SAFETY_ANCHOR_RESIDUAL"} if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in tag_set else set()),
+                    *({"TELEMETRY_SERIAL_DRIFT"} if "TELEMETRY_SERIAL_DRIFT" in tag_set else set()),
+                }
+            )
+        ),
         evidence=(
             f"external.telemetry.battery_percent={external.get('battery_percent')}",
             f"internal.telemetry.battery_percent={internal.get('battery_percent')}",
             f"battery_delta={round(battery_delta, 4)}",
             f"motor_mismatch={motor_mismatch}",
+            f"safety_anchor_residual={internal_safety_critical and external_looks_safer}",
         ),
         effect_score=effect_score,
     )
@@ -120,7 +146,14 @@ def _maybe_add_wrong_target_selection(hypotheses: list[dict], obs: dict, history
     max_delta = max(abs(float(current.get(area, 0.0)) - float(previous.get(area, 0.0))) for area in previous)
     top_shift = top_current != top_previous
     recommendation_shift = recommended is not None and recommended != top_previous
-    effect_score = min(1.0, max_delta + (0.25 if top_shift else 0.0) + (0.15 if recommendation_shift else 0.0))
+    recommendation_conflict = recommended is not None and recommended != top_current
+    effect_score = min(
+        1.0,
+        max_delta
+        + (0.25 if top_shift else 0.0)
+        + (0.15 if recommendation_shift else 0.0)
+        + (0.30 if recommendation_conflict else 0.0),
+    )
     if effect_score < 0.22:
         return
 
@@ -134,6 +167,7 @@ def _maybe_add_wrong_target_selection(hypotheses: list[dict], obs: dict, history
             f"history.top_area={top_previous}",
             f"observed.top_area={top_current}",
             f"observed.recommended_area={recommended}",
+            f"recommended_conflicts_with_observed_top={recommendation_conflict}",
             f"max_priority_delta={round(max_delta, 4)}",
         ),
         effect_score=effect_score,

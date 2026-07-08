@@ -40,6 +40,37 @@ class ScorerTests(unittest.TestCase):
         self.assertEqual(score.winner_detail, "PARTIAL_BREACH")
         self.assertLessEqual(score.goal_reward, 0.30)
 
+    def test_policy_quarantine_prevents_small_telemetry_drift_breach(self):
+        attack = get_attack("TELEMETRY_FDI")
+        pre = create_baseline_state(seed=1)
+        post = create_baseline_state(seed=1)
+        pre["blue_observed"]["telemetry"]["battery_percent"] = 21.4
+        post["blue_observed"]["telemetry"]["battery_percent"] = 21.4
+        post["defense_runtime"]["observe_policy_gate"] = {
+            "algorithm": "zta_inspired_abac_radac_external_observe_v1",
+            "scope": "external_observe_only",
+            "by_domain": {
+                "telemetry": {
+                    "domain": "telemetry",
+                    "decision": "QUARANTINE",
+                    "allowed_use": "detection_only",
+                    "use_weight": 0.05,
+                    "trust_score": 0.45,
+                    "required_assurance": 0.75,
+                }
+            },
+            "decisions": [],
+        }
+
+        score = score_round(pre, post, attack, threats=[], actions=[])
+
+        self.assertTrue(score.attack_success)
+        self.assertTrue(score.goal_success)
+        self.assertFalse(score.detection_success)
+        self.assertEqual(score.winner, "DRAW")
+        self.assertEqual(score.winner_detail, "POLICY_CONTAINMENT")
+        self.assertGreaterEqual(score.containment_score, 0.45)
+
     def test_mission_recommended_area_counts_as_attack_effect(self):
         attack = get_attack("PRIORITY_POISONING")
         pre = create_baseline_state(seed=1)
@@ -136,6 +167,32 @@ class ScorerTests(unittest.TestCase):
 
         self.assertTrue(score.detection_success)
         self.assertEqual(score.evidence["detection_window"], 2)
+
+    def test_score_semantics_separate_pre_goal_from_blue_recovery(self):
+        attack = get_attack("TELEMETRY_FDI")
+        pre = create_baseline_state(seed=1)
+        post = create_baseline_state(seed=1)
+        pre["blue_observed"]["telemetry"]["battery_percent"] = 82
+        pre["blue_observed"]["telemetry"]["motor_status"] = "OK"
+
+        class FakeThreat:
+            target = "telemetry"
+            confidence = 0.9
+
+        actions = [
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.telemetry.battery_percent", 3, 1, 0.05),
+            DefenseAction("FALLBACK_TO_TRUSTED_STATE", "blue_observed.telemetry", 2, 1, 0.03),
+        ]
+        score = score_round(pre, post, attack, threats=[FakeThreat()], actions=actions)
+
+        self.assertTrue(score.attempted_effect_success)
+        self.assertTrue(score.pre_defense_goal_success)
+        self.assertTrue(score.blue_recovered)
+        self.assertFalse(score.post_defense_effective_breach)
+        self.assertEqual(
+            score.evidence["score_semantics"]["pre_defense_goal_success"],
+            score.pre_defense_goal_success,
+        )
 
 
 if __name__ == "__main__":

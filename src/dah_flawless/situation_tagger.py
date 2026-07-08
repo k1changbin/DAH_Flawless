@@ -45,6 +45,9 @@ TAG_MEANINGS: dict[str, str] = {
     "TIMESTAMP_SKEW": "received timestamp moved backward",
     "COMMAND_TIMING_INCONSISTENT": "message sequence and timestamp progression disagree",
     "TELEMETRY_CONFLICT": "telemetry fields changed in a physically inconsistent way",
+    "TELEMETRY_ANCHOR_RESIDUAL": "external telemetry has a residual gap against internal trusted telemetry",
+    "TELEMETRY_SAFETY_ANCHOR_RESIDUAL": "external telemetry makes a low-battery or fault state look safer than the internal anchor",
+    "TELEMETRY_SERIAL_DRIFT": "telemetry residual is drifting in the same direction over consecutive observations",
     "BATTERY_MOTOR_INCONSISTENT": "battery, drain rate, and motor state do not agree",
     "BATTERY_ENERGY_IMPOSSIBLE": "battery value exceeds the physically plausible energy envelope",
     "IMU_TELEMETRY_DIVERGENCE": "IMU position motion exceeds speed and time constraints",
@@ -155,6 +158,9 @@ def derive_tag_details(
 
     telemetry = obs["telemetry"]
     last_telemetry = history["last_telemetry"]
+    internal_telemetry = obs.get("internal_observe", {}).get("telemetry", {})
+    if internal_telemetry:
+        details.extend(_derive_telemetry_anchor_details(telemetry, internal_telemetry, last_telemetry))
     if telemetry["battery_percent"] - last_telemetry["battery_percent"] > 25 and telemetry["battery_drain_rate"] > 0:
         details.append(
             _tag(
@@ -363,6 +369,72 @@ def _derive_channel_shape_details(obs: dict, history: dict) -> list[SituationTag
                     f"c2_message.sequence_number={c2_message.get('sequence_number')}",
                     f"history.last_sequence_number={history.get('last_sequence_number')}",
                     f"comms.packet_loss={comms.get('packet_loss')}",
+                ),
+            )
+        )
+
+    return details
+
+
+def _derive_telemetry_anchor_details(
+    telemetry: dict,
+    internal_telemetry: dict,
+    last_telemetry: dict,
+) -> list[SituationTag]:
+    details: list[SituationTag] = []
+    external_battery = float(telemetry.get("battery_percent", 0.0))
+    internal_battery = float(internal_telemetry.get("battery_percent", external_battery))
+    battery_gap = external_battery - internal_battery
+    abs_gap = abs(battery_gap)
+    motor_mismatch = telemetry.get("motor_status") != internal_telemetry.get("motor_status")
+    internal_safety_critical = internal_battery <= 25.0 or internal_telemetry.get("motor_status") != "OK"
+    external_looks_safer = (
+        battery_gap >= 1.0
+        or (telemetry.get("motor_status") == "OK" and internal_telemetry.get("motor_status") != "OK")
+    )
+
+    if abs_gap >= 6.0 or motor_mismatch:
+        details.append(
+            _tag(
+                "TELEMETRY_ANCHOR_RESIDUAL",
+                0.86,
+                (
+                    f"external.telemetry.battery_percent={telemetry.get('battery_percent')}",
+                    f"internal.telemetry.battery_percent={internal_telemetry.get('battery_percent')}",
+                    f"battery_anchor_gap={round(battery_gap, 4)}",
+                    f"motor_mismatch={motor_mismatch}",
+                ),
+            )
+        )
+
+    if internal_safety_critical and external_looks_safer:
+        details.append(
+            _tag(
+                "TELEMETRY_SAFETY_ANCHOR_RESIDUAL",
+                0.93,
+                (
+                    f"external.telemetry.battery_percent={telemetry.get('battery_percent')}",
+                    f"internal.telemetry.battery_percent={internal_telemetry.get('battery_percent')}",
+                    f"external.telemetry.motor_status={telemetry.get('motor_status')}",
+                    f"internal.telemetry.motor_status={internal_telemetry.get('motor_status')}",
+                    "safety_context=low_battery_or_fault_anchor",
+                ),
+            )
+        )
+
+    previous_battery = float(last_telemetry.get("battery_percent", external_battery))
+    step_delta = external_battery - previous_battery
+    drain_rate = float(telemetry.get("battery_drain_rate", 0.0))
+    if internal_safety_critical and battery_gap >= 1.0 and step_delta > 0.35 and drain_rate > 0:
+        details.append(
+            _tag(
+                "TELEMETRY_SERIAL_DRIFT",
+                0.87,
+                (
+                    f"telemetry.battery_step_delta={round(step_delta, 4)}",
+                    f"battery_anchor_gap={round(battery_gap, 4)}",
+                    f"telemetry.battery_drain_rate={drain_rate}",
+                    "monitor=windowed_residual_drift",
                 ),
             )
         )

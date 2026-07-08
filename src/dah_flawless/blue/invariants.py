@@ -28,13 +28,17 @@ def analyze_invariants(
 
     telemetry_tags = {
         "TELEMETRY_CONFLICT",
+        "TELEMETRY_ANCHOR_RESIDUAL",
+        "TELEMETRY_SAFETY_ANCHOR_RESIDUAL",
+        "TELEMETRY_SERIAL_DRIFT",
         "BATTERY_MOTOR_INCONSISTENT",
         "BATTERY_ENERGY_IMPOSSIBLE",
         "GNSS_INTERNAL_CONFLICT",
         "IMU_TELEMETRY_DIVERGENCE",
     }.intersection(tag_set)
     if telemetry_tags:
-        confidence = _confidence(0.70, telemetry_tags, capabilities, "cross_check_telemetry")
+        base_confidence = 0.78 if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in telemetry_tags else 0.70
+        confidence = _confidence(base_confidence, telemetry_tags, capabilities, "cross_check_telemetry")
         threats.append(
             Threat(
                 target="telemetry",

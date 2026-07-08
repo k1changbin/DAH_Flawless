@@ -141,6 +141,65 @@ class GoalPlannerTests(unittest.TestCase):
         self.assertEqual(state["goal_stats"]["WRONG_TARGET_SELECTION"]["count"], 1)
         self.assertEqual(log["after"]["goal_feedback"]["goal_id"], "WRONG_TARGET_SELECTION")
 
+    def test_red_weight_can_increase_when_detected_attack_beats_baseline(self):
+        agent = RedAgent(seed=1)
+        before = agent.export_policy_state()["weights"]["TELEMETRY_FDI"]
+        score = Score(
+            winner="BLUE_RECOVERY",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=True,
+            availability=0.9,
+            target_domain="telemetry",
+            evidence={
+                "mission_impact": {"mission_impact_score": 0.65},
+                "attrition": {"cost_effective": False},
+                "defense_actions": ["QUARANTINE_FIELD"],
+            },
+            goal_id="TELEMETRY_TRUST_EROSION",
+            goal_success=True,
+            goal_reward=0.9,
+            winner_side="BLUE",
+            winner_detail="RECOVERY",
+            containment_score=0.75,
+            attempted_effect_success=True,
+            pre_defense_goal_success=True,
+            post_defense_effective_breach=False,
+            blue_recovered=True,
+        )
+
+        log = agent.update_weight(
+            "TELEMETRY_FDI",
+            detected=True,
+            goal_id="TELEMETRY_TRUST_EROSION",
+            score=score,
+            round_number=10,
+        )
+        state = agent.export_policy_state()
+
+        self.assertGreater(state["weights"]["TELEMETRY_FDI"], before)
+        self.assertGreater(state["attack_reward_ema"]["TELEMETRY_FDI"], 0.45)
+        self.assertGreater(log["after"]["red_learning_reward"]["relative_advantage"], 0)
+
+    def test_red_floor_guard_restores_relative_preference(self):
+        agent = RedAgent(seed=1)
+        for attack_name in agent._weights:
+            agent._weights[attack_name] = 1.0
+        agent._attack_reward_ema.update(
+            {
+                "PRIORITY_POISONING": 0.35,
+                "TELEMETRY_FDI": 0.62,
+                "TIME_DESYNC_REPLAY": 0.42,
+            }
+        )
+
+        agent._restore_relative_floor_if_saturated()
+        state = agent.export_policy_state()
+
+        self.assertGreater(state["weights"]["TELEMETRY_FDI"], state["weights"]["PRIORITY_POISONING"])
+        self.assertGreater(state["weights"]["TELEMETRY_FDI"], 1.0)
+
     def test_simulation_logs_goal_plan_and_candidates(self):
         logs, summary = run_simulation(seed=42, rounds=4)
 

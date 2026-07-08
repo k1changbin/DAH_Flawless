@@ -190,6 +190,7 @@ def update_blue_policy(
 
     counts = policy["feedback_counts"][domain]
     action_cost = round(sum(action.availability_cost for action in actions), 4)
+    containment_score = _containment_score(score)
     threat_seen = any(threat.target == domain for threat in threats)
     scorer_goal_effect_id = _score_effect_id(score)
     seen_effect_ids = set(_threat_effect_ids(threats))
@@ -224,9 +225,16 @@ def update_blue_policy(
         reason = "false_positive_reduce_sensitivity"
     elif score.detection_success:
         counts["detected"] += 1
-        trust_delta = 0.02 if score.recovery_success else -0.02
+        trust_delta = 0.02 if score.recovery_success or containment_score >= 0.55 else -0.02
         sensitivity_delta = 0.01 if threat_seen else 0.0
-        _adjust(policy, domain, trust_delta=trust_delta, sensitivity_delta=sensitivity_delta, threshold_delta=0.0)
+        threshold_delta = 0.01 if containment_score >= 0.65 and not score.goal_success else 0.0
+        _adjust(
+            policy,
+            domain,
+            trust_delta=trust_delta,
+            sensitivity_delta=sensitivity_delta,
+            threshold_delta=threshold_delta,
+        )
         reason = "detected_reinforce_domain"
 
     if goal_effect_id:
@@ -249,8 +257,9 @@ def update_blue_policy(
             effect_reason = _impact_reason("missed_goal_effect_raise_sensitivity", impact_score)
         elif score.goal_success and effect_seen:
             effect_counts["detected_effect"] += 1
-            reinforce_sensitivity = 0.01 if score.recovery_success else 0.03
-            reinforce_threshold = 0.0 if score.recovery_success else -impact_threshold_bonus * 0.5
+            effect_contained = containment_score >= 0.55
+            reinforce_sensitivity = 0.01 if score.recovery_success or effect_contained else 0.03
+            reinforce_threshold = 0.0 if score.recovery_success or effect_contained else -impact_threshold_bonus * 0.5
             _adjust_effect(
                 policy,
                 goal_effect_id,
@@ -263,10 +272,10 @@ def update_blue_policy(
             _adjust_effect(policy, goal_effect_id, sensitivity_delta=-0.04, threshold_delta=0.03)
             effect_reason = "false_positive_goal_effect_reduce_sensitivity"
 
-        if score.recovery_success and effect_seen:
+        if (score.recovery_success or containment_score >= 0.65) and effect_seen:
             effect_counts["recovered_effect"] += 1
 
-    if score.recovery_success:
+    if score.recovery_success or containment_score >= 0.65:
         counts["recovered"] += 1
 
     if action_cost >= 0.10 or score.winner == "RED_ATTRITION":
@@ -295,6 +304,7 @@ def update_blue_policy(
             "detection_success": score.detection_success,
             "false_positive": score.false_positive,
             "recovery_success": score.recovery_success,
+            "containment_score": containment_score,
             "goal_id": score.goal_id,
             "goal_success": score.goal_success,
             "scorer_goal_effect_id": scorer_goal_effect_id,
@@ -337,6 +347,11 @@ def freeze_blue_policy(policy_state: dict | None) -> tuple[dict, dict]:
         before=deepcopy(policy),
         after=deepcopy(policy),
     )
+
+
+def _containment_score(score: Score) -> float:
+    containment = (score.evidence or {}).get("containment", {})
+    return float(getattr(score, "containment_score", containment.get("containment_score", 0.0)) or 0.0)
 
 
 def _adjust(

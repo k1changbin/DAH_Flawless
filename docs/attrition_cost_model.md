@@ -55,6 +55,13 @@ off into internal inspection or passive monitoring. This models adaptive
 response: Blue should preserve mission availability when the marginal defense
 benefit is low.
 
+Blue availability is now scoped to a single round-level combat episode. At the
+start of each round, `round_episode_budget_reset_v1` resets
+`mission.availability` and `mission.trust_budget` to the scenario's episode
+initial budget. This prevents stale availability loss from making a later
+`RED_ATTRITION` victory look stronger than the current episode actually
+justifies. The detailed procedure is in `docs/blue_availability_recovery_model.md`.
+
 ## Red Policy Effectiveness
 
 The three current Red policy families remain simulator-safe effect families:

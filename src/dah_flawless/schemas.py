@@ -91,6 +91,11 @@ class Score:
     winner_side: str | None = None
     winner_detail: str | None = None
     outcome_reason: str | None = None
+    containment_score: float = 0.0
+    attempted_effect_success: bool = False
+    pre_defense_goal_success: bool = False
+    post_defense_effective_breach: bool = False
+    blue_recovered: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

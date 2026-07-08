@@ -26,9 +26,14 @@ from dah_flawless.blue.feedback_learner import (
 )
 from dah_flawless.blue.incident_report import write_incident_report
 from dah_flawless.blue.mission_monitor import estimate_mission_risk
+from dah_flawless.blue.observe_policy_gate import evaluate_observe_policy
 from dah_flawless.blue.threat_detection import detect_threats
 from dah_flawless.blue.zero_trust_gate import evaluate_zero_trust, summarize_zta
 from dah_flawless.config import (
+    DEFAULT_BLUE_READINESS_GATE_ENABLED,
+    DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+    DEFAULT_BLUE_READINESS_THRESHOLD,
+    DEFAULT_BLUE_READINESS_WINDOW,
     DEFAULT_MUTATION_PROFILE,
     DEFAULT_ROUNDS,
     DEFAULT_SCENARIO,
@@ -37,8 +42,9 @@ from dah_flawless.config import (
     SCRIPTED_ATTACKS,
 )
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
+from dah_flawless.environment.readiness import assess_blue_readiness
 from dah_flawless.environment.redaction import redact_state
-from dah_flawless.environment.simulator import _advance_normal_state
+from dah_flawless.environment.simulator import _advance_normal_state, mark_episode_initial_budget
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
 from dah_flawless.observation import sync_external_observe_from_flat
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
@@ -120,6 +126,10 @@ class RoundCombatRunner:
         mutation_profile: str = DEFAULT_MUTATION_PROFILE,
         red_update_enabled: bool = True,
         blue_update_enabled: bool = True,
+        blue_readiness_gate_enabled: bool = DEFAULT_BLUE_READINESS_GATE_ENABLED,
+        blue_readiness_threshold: float = DEFAULT_BLUE_READINESS_THRESHOLD,
+        blue_readiness_min_samples: int = DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+        blue_readiness_window: int = DEFAULT_BLUE_READINESS_WINDOW,
         red_policy_state: dict | None = None,
         blue_policy_state: dict | None = None,
         scripted_attacks: tuple[str, ...] = SCRIPTED_ATTACKS,
@@ -133,6 +143,12 @@ class RoundCombatRunner:
             raise ValueError("min_steps must be > 0")
         if min_steps > max_steps:
             raise ValueError("min_steps must be <= max_steps")
+        if not 0.0 <= blue_readiness_threshold <= 1.0:
+            raise ValueError("blue_readiness_threshold must be between 0 and 1")
+        if blue_readiness_min_samples < 1:
+            raise ValueError("blue_readiness_min_samples must be >= 1")
+        if blue_readiness_window < 1:
+            raise ValueError("blue_readiness_window must be >= 1")
 
         self.seed = seed
         self.rounds = rounds
@@ -143,6 +159,10 @@ class RoundCombatRunner:
         self.mutation_profile = mutation_profile
         self.red_update_enabled = red_update_enabled
         self.blue_update_enabled = blue_update_enabled
+        self.blue_readiness_gate_enabled = blue_readiness_gate_enabled
+        self.blue_readiness_threshold = blue_readiness_threshold
+        self.blue_readiness_min_samples = blue_readiness_min_samples
+        self.blue_readiness_window = blue_readiness_window
         self.red_policy_state = red_policy_state
         self.blue_policy_state = blue_policy_state
         self.scripted_attacks = scripted_attacks
@@ -160,6 +180,7 @@ class RoundCombatRunner:
         state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(self.seed, self.scenario)
         if self.blue_policy_state is not None:
             apply_blue_policy_state(state, self.blue_policy_state)
+        mark_episode_initial_budget(state, overwrite=True)
 
         red_agent = RedAgent(
             self.seed,
@@ -176,12 +197,22 @@ class RoundCombatRunner:
 
         for round_number in range(1, self.rounds + 1):
             state = _advance_normal_state(state, round_number)
+            readiness = self._blue_readiness([*previous_context, *logs])
+            effective_red_update = self.red_update_enabled and (
+                not self.blue_readiness_gate_enabled or readiness["ready"]
+            )
+            effective_blue_update = self.blue_update_enabled or (
+                self.blue_readiness_gate_enabled and self.red_update_enabled and not readiness["ready"]
+            )
             entry_without_hash, state, history = self._run_single_round(
                 round_number=round_number,
                 state=state,
                 history=history,
                 red_agent=red_agent,
                 previous_logs=[*previous_context, *logs],
+                effective_red_update_enabled=effective_red_update,
+                effective_blue_update_enabled=effective_blue_update,
+                blue_readiness=readiness,
             )
             entry = attach_hash(prev_hash, entry_without_hash)
             logs.append(entry)
@@ -205,6 +236,19 @@ class RoundCombatRunner:
                 "update_mode": {
                     "red_update_enabled": self.red_update_enabled,
                     "blue_update_enabled": self.blue_update_enabled,
+                },
+                "blue_readiness_gate": {
+                    "enabled": self.blue_readiness_gate_enabled,
+                    "threshold": self.blue_readiness_threshold,
+                    "min_samples": self.blue_readiness_min_samples,
+                    "window": self.blue_readiness_window,
+                    "final": self._blue_readiness([*previous_context, *logs]),
+                    "red_updates_blocked": sum(
+                        1
+                        for entry in logs
+                        if entry.get("update_mode", {}).get("planned_red_update_enabled")
+                        and not entry.get("update_mode", {}).get("red_update_enabled")
+                    ),
                 },
                 "red_policy_state": red_agent.export_policy_state(),
                 "blue_policy_state": export_blue_policy_state(state),
@@ -230,6 +274,9 @@ class RoundCombatRunner:
         history: dict,
         red_agent: RedAgent,
         previous_logs: list[dict],
+        effective_red_update_enabled: bool,
+        effective_blue_update_enabled: bool,
+        blue_readiness: dict,
     ) -> tuple[dict, dict, dict]:
         redacted_for_red = redact_state(state)
         tag_details = derive_tag_details(redacted_for_red, history, redacted_for_red["capabilities"])
@@ -242,6 +289,7 @@ class RoundCombatRunner:
             previous_logs=previous_logs,
         )
         red_goal = deepcopy(tactic.get("goal_plan") or red_choice_log.get("after", {}).get("goal"))
+        availability_recovery = deepcopy(state.get("defense_runtime", {}).get("availability_recovery", {}))
 
         combat_memory = CombatStepMemory(active_strategy=tactic.get("strategy"))
         current_state = deepcopy(state)
@@ -258,6 +306,7 @@ class RoundCombatRunner:
         final_threats: list[Threat] = []
         final_risks = []
         final_actions: list[DefenseAction] = []
+        final_observe_policy_gate: dict | None = None
         final_decision_logs: list[dict] = []
         step_zta_decisions: list[list] = []
         termination_reason = "max_steps"
@@ -298,12 +347,20 @@ class RoundCombatRunner:
                 candidate_threats,
             )
             step_zta_decisions.append(zta_decisions)
+            observe_policy_gate, observe_policy_log = evaluate_observe_policy(
+                redacted_for_blue,
+                history,
+                red_state["capabilities"],
+            )
+            red_state.setdefault("defense_runtime", {})["observe_policy_gate"] = observe_policy_gate
             suspicion = max(_max_confidence(candidate_threats), _zta_policy_suspicion(zta_decisions))
             blue_action = _plan_blue_step(
                 step_number=step_number,
                 suspicion=suspicion,
                 candidate_threats=candidate_threats,
                 memory=combat_memory,
+                availability=float(red_state["mission"].get("availability", 1.0)),
+                trust_budget=float(red_state["mission"].get("trust_budget", 1.0)),
             )
             combat_memory.count_blue(blue_action)
             recognized_threats = _recognized_threats_for_action(blue_action, candidate_threats)
@@ -386,6 +443,7 @@ class RoundCombatRunner:
                 "blue_candidate_threats": [threat.to_dict() for threat in candidate_threats],
                 "blue_recognized_threats": [threat.to_dict() for threat in recognized_threats],
                 "blue_suspicion": suspicion,
+                "observe_policy_gate": deepcopy(observe_policy_gate),
                 "detected_this_step": detected_this_step,
                 "zta_decisions": [item.to_dict() for item in zta_decisions],
                 "defense_actions": [action.to_dict() for action in actions],
@@ -401,11 +459,13 @@ class RoundCombatRunner:
             final_threats = recognized_threats
             final_risks = risks
             final_actions = list(cumulative_actions)
+            final_observe_policy_gate = deepcopy(observe_policy_gate)
             final_decision_logs = [
                 red_step_log,
                 threat_log,
                 policy_detection_log,
                 zta_log,
+                observe_policy_log,
                 risk_log,
                 defense_log,
                 report_log,
@@ -450,7 +510,7 @@ class RoundCombatRunner:
         final_decision_logs.insert(-1, final_causal_log)
 
         blue_policy_before = export_blue_policy_state(current_state)
-        if self.blue_update_enabled:
+        if effective_blue_update_enabled:
             blue_policy_after, blue_update_log = update_blue_policy(
                 blue_policy_before,
                 final_score,
@@ -462,7 +522,7 @@ class RoundCombatRunner:
             blue_policy_after, blue_update_log = freeze_blue_policy(blue_policy_before)
         apply_blue_policy_state(current_state, blue_policy_after)
 
-        if self.red_update_enabled:
+        if effective_red_update_enabled:
             red_update_log = red_agent.update_weight(
                 attack.name,
                 final_score.detection_success,
@@ -488,13 +548,17 @@ class RoundCombatRunner:
             "scenario_profile": deepcopy(current_state.get("scenario_profile", {})),
             "mutation_profile": self.mutation_profile,
             "update_mode": {
-                "red_update_enabled": self.red_update_enabled,
-                "blue_update_enabled": self.blue_update_enabled,
+                "red_update_enabled": effective_red_update_enabled,
+                "blue_update_enabled": effective_blue_update_enabled,
+                "planned_red_update_enabled": self.red_update_enabled,
+                "planned_blue_update_enabled": self.blue_update_enabled,
+                "blue_readiness_gate": deepcopy(blue_readiness),
             },
             "truth_model": "scorer_truth",
             "truth_storage_key": 'state["world"]',
             "raw_world_source_hash": current_state["world"].get("raw_world_hash"),
             "raw_world_feature_scores": deepcopy(current_state["world"].get("raw_world_feature_scores", {})),
+            "availability_recovery": availability_recovery,
             "attack": attack.to_dict(),
             "stealth": stealth,
             "red_goal": red_goal,
@@ -511,6 +575,7 @@ class RoundCombatRunner:
             "blue_step_action_counts": deepcopy(combat_memory.blue_action_counts),
             "threats": [threat.to_dict() for threat in final_threats],
             "mission_risks": [risk.to_dict() for risk in final_risks],
+            "observe_policy_gate": deepcopy(final_observe_policy_gate or {}),
             "defense_actions": [action.to_dict() for action in final_actions],
             "score": final_score.to_dict(),
             "causal_consistency": final_causal,
@@ -518,8 +583,8 @@ class RoundCombatRunner:
             "red_policy_state": red_agent.export_policy_state(),
             "blue_policy_state": export_blue_policy_state(current_state),
             "feedback": {
-                "red_policy_updated": self.red_update_enabled,
-                "blue_policy_updated": self.blue_update_enabled,
+                "red_policy_updated": effective_red_update_enabled,
+                "blue_policy_updated": effective_blue_update_enabled,
                 "winner": final_score.winner,
                 "winner_side": final_score.winner_side,
                 "winner_detail": final_score.winner_detail,
@@ -529,6 +594,10 @@ class RoundCombatRunner:
                 "attack_success": final_score.attack_success,
                 "goal_success": final_score.goal_success,
                 "goal_reward": final_score.goal_reward,
+                "attempted_effect_success": final_score.attempted_effect_success,
+                "pre_defense_goal_success": final_score.pre_defense_goal_success,
+                "post_defense_effective_breach": final_score.post_defense_effective_breach,
+                "blue_recovered": final_score.blue_recovered,
                 "mission_impact_score": final_score.evidence.get("mission_impact", {}).get("mission_impact_score"),
                 "policy_decision_correctness": zta_policy["policy_decision_correctness"],
                 "causal_consistency_score": final_causal["consistency_score"],
@@ -548,6 +617,14 @@ class RoundCombatRunner:
         }
         return entry_without_hash, current_state, make_history(current_state)
 
+    def _blue_readiness(self, logs: list[dict]) -> dict:
+        return assess_blue_readiness(
+            logs,
+            threshold=self.blue_readiness_threshold,
+            min_samples=self.blue_readiness_min_samples,
+            window=self.blue_readiness_window,
+        )
+
 
 def run_combat_rounds(
     *,
@@ -558,6 +635,10 @@ def run_combat_rounds(
     scenario: str = DEFAULT_SCENARIO,
     stealth_mode: str = DEFAULT_STEALTH_MODE,
     mutation_profile: str = DEFAULT_MUTATION_PROFILE,
+    blue_readiness_gate_enabled: bool = DEFAULT_BLUE_READINESS_GATE_ENABLED,
+    blue_readiness_threshold: float = DEFAULT_BLUE_READINESS_THRESHOLD,
+    blue_readiness_min_samples: int = DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+    blue_readiness_window: int = DEFAULT_BLUE_READINESS_WINDOW,
     log_path: Path | None = None,
     summary_path: Path | None = None,
     frontend_log_path: Path | None = None,
@@ -570,6 +651,10 @@ def run_combat_rounds(
         scenario=scenario,
         stealth_mode=stealth_mode,
         mutation_profile=mutation_profile,
+        blue_readiness_gate_enabled=blue_readiness_gate_enabled,
+        blue_readiness_threshold=blue_readiness_threshold,
+        blue_readiness_min_samples=blue_readiness_min_samples,
+        blue_readiness_window=blue_readiness_window,
     )
     return runner.run(log_path=log_path, summary_path=summary_path, frontend_log_path=frontend_log_path)
 
@@ -617,9 +702,17 @@ def _plan_blue_step(
     suspicion: float,
     candidate_threats: list[Threat],
     memory: CombatStepMemory,
+    availability: float = 1.0,
+    trust_budget: float = 1.0,
 ) -> str:
     if memory.blue_compute_budget < 0.06 or memory.blue_power_budget < 0.06:
         return "WAIT"
+    if availability < 0.18 and suspicion < 0.95:
+        return "INSPECT_INTERNAL" if candidate_threats and suspicion >= 0.65 else "WAIT"
+    if availability < 0.35 and memory.blue_defense_cost_total >= 0.18 and suspicion < 0.92:
+        return "INSPECT_INTERNAL" if candidate_threats and suspicion >= 0.58 else "PASSIVE_MONITOR"
+    if trust_budget < 0.18 and suspicion < 0.90:
+        return "INSPECT_INTERNAL" if candidate_threats else "WAIT"
     if memory.blue_consecutive_defense_steps >= 3 and memory.last_recovered and suspicion < 0.92:
         return "INSPECT_INTERNAL" if suspicion >= 0.68 else "PASSIVE_MONITOR"
     if memory.blue_defense_cost_total >= 0.36 and memory.last_effect_score < 0.35 and suspicion < 0.86:

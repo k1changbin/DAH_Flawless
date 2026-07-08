@@ -22,6 +22,7 @@ raw_world
 - 보고서용 기준에서 1 episode는 30 consecutive timesteps다.
 - 현재 코드의 `round`는 단일 step이고, `EpisodeRunner`가 30 step을 하나의 episode로 묶는다.
 - `RoundCombatRunner`는 실험용 동적 공방 runner다. 여기서는 1 round가 하나의 variable-length combat episode이며, Red/Blue가 `WAIT`, `PROBE_BOUNDARY`, `SLOW_DRIFT`, `INSPECT_INTERNAL`, `DEFEND`, `ABORT` 같은 decision step을 반복하다가 종료 조건이나 max step에 도달하면 끝난다. 기존 `run_simulation` 기본 흐름은 아직 유지한다.
+- Blue readiness gate는 Blue의 최근 방어 성공률이 기준에 도달하기 전까지 Red policy/goal weight 업데이트를 막고 Blue 업데이트를 계속 허용한다. 이 게이트는 `TrainingScheduler`와 `RoundCombatRunner` 양쪽에 적용된다.
 - World Generator는 rule-based transition을 기본으로 하고, LLM은 causal supervisor/reviewer로만 사용한다.
 - Mutation Approval Reviewer는 reviewer-only다. approve/clamp/reject/explain만 가능하고, 공격 선택·변조값 생성·state 수정·payload 생성은 하지 않는다.
 - Red 공격 범위는 simulated observe mutation과 channel-level delay/drop/jitter/reorder/loss abstraction까지 포함한다.
@@ -32,6 +33,8 @@ raw_world
 - Blue는 raw_world와 scorer_truth/state["world"]를 볼 수 없다.
 - Blue는 우선 rule-based baseline으로 두고, 구조 확정 뒤 학습형 정책을 붙인다.
 - Blue Goal Consistency Checker는 scorer의 `red_goal`을 보지 않고 observed/internal/history/tags만으로 cyber-effect hypothesis를 만든다.
+- Blue availability는 임무 지속성 예산이다. 방어 action은 availability/trust_budget을 소모하지만, 그 손상은 한 round-level combat episode 안에서만 유효하다. 라운드 시작마다 `round_episode_budget_reset_v1`이 시나리오 초기 예산으로 리셋한다. 근거와 수식은 `docs/blue_availability_recovery_model.md`에 있다.
+- Blue Defense-Effect Contract는 완전 복구 전 단계의 피해 억제를 `containment_score`로 기록한다. `recovery_success`는 엄격한 trusted restore로 유지하고, readiness gate는 detection/containment/availability를 반영한 연속 점수로 Blue 준비도를 판단한다. 근거와 수식은 `docs/blue_defense_effect_contracts.md`에 있다.
 - Blue Feedback Learner는 scorer feedback으로 domain policy와 effect policy(`effect_sensitivity`, `effect_threshold`, `effect_feedback_counts`)를 업데이트한다. 또한 scorer의 mission-impact를 effect별 EMA로 기록하고, 고영향 effect를 놓치거나 탐지 후 복구하지 못하면 해당 effect 민감도/threshold 보정을 더 강하게 적용한다.
 - `DETECTION_BOUNDARY_PROBE`는 학습용 meta goal이다. Blue Feedback Learner는 이를 독립 effect로 누적하지 않고 mission-impact component나 실제 감지된 하위 `EFFECT_*`로 remap해 detector가 허상 목표에 과적합되지 않게 한다.
 - `HOLD_COMMAND` 복구는 stale last-known-good보다 현재 `internal_observe.c2_message`를 우선한다. 내부 C2 anchor가 없을 때만 last-known-good/history로 fallback한다.
@@ -69,6 +72,8 @@ raw_world
 | `docs/raw_world_schema.md` | raw_world 설명 |
 | `docs/mutation_policy.md` | Mutation Policy 설명과 구현 단계 |
 | `docs/attack_effect_contracts.md` | 실제 문헌/문서 기반 Attack-Effect Contract와 비판적 평가 |
+| `docs/blue_availability_recovery_model.md` | Blue 방어 절차, availability/trust_budget 회복 수식, 문헌 근거 |
+| `docs/blue_defense_effect_contracts.md` | Blue 방어 action별 containment_score와 readiness gate 근거 |
 | `src/dah_flawless/world/generator.py` | rule-based raw_world generator |
 | `src/dah_flawless/world/feature_extractor.py` | raw_world feature extractor |
 | `src/dah_flawless/world/state_adapter.py` | raw_world -> MVP runtime state 변환 |
@@ -78,6 +83,7 @@ raw_world
 | `src/dah_flawless/attacks/selector.py` | Attack/Tactic scoring |
 | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed mutation engine |
 | `src/dah_flawless/blue/goal_consistency.py` | Blue observed-only cyber-effect hypothesis checker |
+| `src/dah_flawless/blue/defense_effects.py` | Blue Defense-Effect Contract와 containment scoring |
 | `src/dah_flawless/blue/feedback_learner.py` | Blue scorer feedback learner |
 | `src/dah_flawless/llm/` | shared role-scoped external LLM adapter and offline fallback boundary |
 | `src/dah_flawless/mutation_review/` | mutation approval reviewer and external-LLM fallback |
@@ -121,6 +127,14 @@ python -m dah_flawless.main --seed 42 --rounds 5
 $env:PYTHONPATH='src'
 python -m dah_flawless.main --seed 42 --episodes 2 --steps-per-episode 30
 ```
+
+## ZTA-Inspired Observe Policy Gate
+
+- 현재 구현 범위는 `external_observe` 대상 사용권한 판단이다.
+- `internal_observe`는 Blue의 trust anchor로만 사용한다.
+- 이 모듈은 공격 탐지기가 아니라 외부 관측값을 임무 판단에 어느 수준으로 사용할지 결정하는 policy gate다.
+- `detection_success`는 직접 올리지 않고, `mission_impact.observe_policy_gate`와 `containment.policy_containment` evidence로만 반영한다.
+- 문서와 수식은 `docs/zta_observe_policy_gate.md`를 기준으로 한다.
 
 학습 schedule 시뮬레이션:
 
