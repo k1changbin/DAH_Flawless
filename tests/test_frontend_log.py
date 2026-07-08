@@ -29,6 +29,11 @@ class FrontendLogTests(unittest.TestCase):
         self.assertIn("winner_detail", ui_first["outcome"])
         self.assertTrue(ui_first["action_runs"])
         self.assertIn("filters", frontend)
+        self.assertIn("zero_trust", frontend)
+        self.assertIn("avg_policy_decision_correctness", frontend["summary"])
+        self.assertIn("zta_decisions", frontend["filters"])
+        self.assertIn("zta_policy", ui_first)
+        self.assertTrue(ui_first["timeline"][0]["zta"])
 
     def test_round_combat_runner_can_write_frontend_log_separately(self):
         with tempfile.TemporaryDirectory() as tmpdir:

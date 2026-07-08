@@ -14,6 +14,7 @@ from dah_flawless.config import (
     TRUSTED_RESTORE_DEGRADED_COST_MULTIPLIER,
 )
 from dah_flawless.blue.goal_consistency import effect_ids_from_tags
+from dah_flawless.blue.zero_trust_gate import zta_action_candidates
 from dah_flawless.observation import sync_external_observe_from_flat
 from dah_flawless.schemas import DefenseAction, MissionRisk, Threat, decision
 
@@ -23,6 +24,7 @@ def plan_defense(
     risks: list[MissionRisk],
     mission_state: dict,
     defense_runtime: dict | None = None,
+    zta_decisions: list[Any] | None = None,
 ) -> tuple[list[DefenseAction], dict]:
     actions: list[DefenseAction] = []
     defense_runtime = defense_runtime or {}
@@ -36,6 +38,11 @@ def plan_defense(
         confirmed = threat.confidence >= threshold or trust < TRUST_ESCALATION_THRESHOLD
         actions.extend(_actions_for_threat(threat, confirmed))
 
+    zta_candidates = zta_action_candidates(zta_decisions or [])
+    zta_actions = _actions_for_zta_candidates(zta_candidates, actions)
+    if zta_actions:
+        actions = _dedupe_actions([*actions, *zta_actions])
+
     cost = round(sum(action.availability_cost for action in actions), 4)
     log = decision(
         "DefensePlannerAgent",
@@ -47,8 +54,13 @@ def plan_defense(
             "domain_trust": domain_trust,
             "escalation_threshold": escalation_threshold,
             "effect_threshold": effect_threshold,
+            "zta_policy_candidates": zta_candidates,
         },
-        after={"actions": [action.to_dict() for action in actions], "availability_cost": cost},
+        after={
+            "actions": [action.to_dict() for action in actions],
+            "zta_policy_actions": [action.to_dict() for action in zta_actions],
+            "availability_cost": cost,
+        },
     )
     return actions, log
 
@@ -192,6 +204,51 @@ def _goal_effect_actions(threat: Threat) -> list[DefenseAction]:
         )
 
     return _dedupe_actions(actions)
+
+
+def _actions_for_zta_candidates(
+    candidates: list[dict[str, Any]],
+    existing_actions: list[DefenseAction],
+) -> list[DefenseAction]:
+    actions: list[DefenseAction] = []
+    for candidate in candidates:
+        domain = str(candidate.get("domain", ""))
+        if _domain_already_covered(domain, existing_actions):
+            continue
+        action = str(candidate.get("action", "OBSERVE_DOMAIN"))
+        target = str(candidate.get("target", domain))
+        priority = {
+            "DENY": 3,
+            "QUARANTINE": 3,
+            "REVALIDATE": 2,
+            "DOWNGRADE": 1,
+        }.get(str(candidate.get("decision")), 1)
+        actions.append(
+            DefenseAction(
+                action,
+                target,
+                priority,
+                1,
+                _zta_action_cost(action, candidate),
+            )
+        )
+    return actions
+
+
+def _domain_already_covered(domain: str, actions: list[DefenseAction]) -> bool:
+    return any(_action_domain(action) == domain for action in actions)
+
+
+def _zta_action_cost(action: str, candidate: dict[str, Any]) -> float:
+    if action == "OBSERVE_DOMAIN":
+        return min(0.005, float(candidate.get("availability_cost", 0.005)))
+    if action == "REQUEST_REVALIDATION":
+        return min(0.01, float(candidate.get("availability_cost", 0.01)))
+    if action == "HOLD_COMMAND":
+        return min(0.03, float(candidate.get("availability_cost", 0.03)))
+    if action == "QUARANTINE_FIELD":
+        return min(0.025, float(candidate.get("availability_cost", 0.025)))
+    return min(0.01, float(candidate.get("availability_cost", 0.01)))
 
 
 def _update_domain_trust(state: dict, actions: list[DefenseAction], threats: list[Threat]) -> None:

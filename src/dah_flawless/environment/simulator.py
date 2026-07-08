@@ -19,6 +19,7 @@ from dah_flawless.blue.feedback_learner import (
 from dah_flawless.blue.incident_report import write_incident_report
 from dah_flawless.blue.mission_monitor import estimate_mission_risk
 from dah_flawless.blue.threat_detection import detect_threats
+from dah_flawless.blue.zero_trust_gate import evaluate_zero_trust, summarize_zta
 from dah_flawless.config import (
     ACTIVE_DEFENSE_RECOVERY_PENALTY,
     AVAILABILITY_RECOVERY_PER_ROUND,
@@ -134,8 +135,23 @@ def run_simulation(
             redacted_for_blue, history, attacked_state["capabilities"]
         )
         threats, blue_detection_policy_log = apply_detection_policy(threats, export_blue_policy_state(attacked_state))
-        risks, risk_log = estimate_mission_risk(redacted_for_blue, threats)
-        actions, defense_log = plan_defense(threats, risks, attacked_state["mission"], attacked_state["defense_runtime"])
+        zta_decisions, zta_log = evaluate_zero_trust(
+            redacted_for_blue["blue_observed"],
+            history,
+            redacted_for_blue["capabilities"],
+            redacted_for_blue["defense_runtime"].get("domain_trust", {}),
+            redacted_for_blue["mission"],
+            threats,
+        )
+        zta_policy = summarize_zta([zta_decisions], attack.target_domain)
+        risks, risk_log = estimate_mission_risk(redacted_for_blue, threats, zta_decisions)
+        actions, defense_log = plan_defense(
+            threats,
+            risks,
+            attacked_state["mission"],
+            attacked_state["defense_runtime"],
+            zta_decisions,
+        )
         blue_policy_before_round = export_blue_policy_state(attacked_state)
         defended_state = apply_defense_actions(attacked_state, actions, history, threats, attacked_state["capabilities"])
         if not blue_update_enabled:
@@ -150,6 +166,7 @@ def run_simulation(
             threat_history=threat_history,
             recovery_history=recovery_history,
             red_goal=red_goal,
+            zta_decisions=zta_decisions,
         )
         causal_consistency, causal_log = assess_causal_consistency(
             attack=attack,
@@ -212,6 +229,8 @@ def run_simulation(
             "red_goal": red_goal,
             "red_tactic": red_tactic,
             "threats": [threat.to_dict() for threat in threats],
+            "zta_decisions": [item.to_dict() for item in zta_decisions],
+            "zta_policy": zta_policy,
             "mission_risks": [risk.to_dict() for risk in risks],
             "defense_actions": defended_state["defense_runtime"]["active_defenses"],
             "score": score.to_dict(),
@@ -232,6 +251,7 @@ def run_simulation(
                 "goal_success": score.goal_success,
                 "goal_reward": score.goal_reward,
                 "mission_impact_score": score.evidence.get("mission_impact", {}).get("mission_impact_score"),
+                "policy_decision_correctness": zta_policy["policy_decision_correctness"],
                 "causal_consistency_score": causal_consistency["consistency_score"],
                 "causal_consistency_status": causal_consistency["status"],
                 "detection_success": score.detection_success,
@@ -242,6 +262,7 @@ def run_simulation(
                 mutation_log,
                 threat_log,
                 blue_detection_policy_log,
+                zta_log,
                 risk_log,
                 defense_log,
                 causal_log,

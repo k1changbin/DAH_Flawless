@@ -15,6 +15,8 @@ from typing import Any
 
 FRONTEND_LOG_SCHEMA = "dah_frontend_combat_log_v1"
 
+_RESTRICTIVE_DECISIONS = frozenset({"DOWNGRADE", "REVALIDATE", "QUARANTINE", "DENY"})
+
 
 def build_frontend_combat_log(logs: list[dict], summary: dict | None = None) -> dict[str, Any]:
     """Return a compact replay log for dashboard/frontend use."""
@@ -33,6 +35,7 @@ def build_frontend_combat_log(logs: list[dict], summary: dict | None = None) -> 
         "summary": _summary_view(frontend_rounds, summary),
         "filters": _filters(frontend_rounds),
         "policy_snapshot": _policy_snapshot(summary),
+        "zero_trust": _zero_trust_summary(frontend_rounds),
         "rounds": frontend_rounds,
     }
 
@@ -63,6 +66,9 @@ def _summary_view(rounds: list[dict], summary: dict) -> dict[str, Any]:
         "avg_step_count": summary.get("avg_step_count") or _avg([item["step_count"] for item in rounds]),
         "final_availability": summary.get("final_availability"),
         "min_availability": summary.get("min_availability"),
+        "avg_policy_decision_correctness": _avg(
+            [item["zta_policy"].get("policy_decision_correctness") for item in rounds if item.get("zta_policy")]
+        ),
     }
 
 
@@ -90,6 +96,7 @@ def _round_view(entry: dict) -> dict[str, Any]:
         "outcome": outcome,
         "action_runs": _action_runs(timeline),
         "highlights": _highlights(timeline, outcome),
+        "zta_policy": entry.get("zta_policy") or {},
         "timeline": timeline,
     }
 
@@ -106,6 +113,7 @@ def _step_view(step: dict) -> dict[str, Any]:
         "phase": _phase(step),
         "suspicion": _round_float(step.get("blue_suspicion")),
         "detected": bool(step.get("detected_this_step", False)),
+        "zta": _step_zta_view(step.get("zta_decisions", [])),
         "changed_paths": list(red_step.get("changed_paths", [])),
         "changed_path_count": len(red_step.get("changed_paths", [])),
         "delta": {
@@ -256,6 +264,46 @@ def _policy_snapshot(summary: dict) -> dict[str, Any]:
     }
 
 
+def _step_zta_view(decisions: list[dict]) -> list[dict[str, Any]]:
+    return [
+        {
+            "domain": item.get("domain"),
+            "decision": item.get("decision"),
+            "trust_score": _round_float(item.get("trust_score")),
+            "allowed_use": item.get("allowed_use"),
+            "restrictive": item.get("decision") in _RESTRICTIVE_DECISIONS,
+            "reasons": list(item.get("reasons", [])),
+        }
+        for item in decisions
+    ]
+
+
+def _zero_trust_summary(rounds: list[dict]) -> dict[str, Any]:
+    counts = Counter()
+    correctness: list[float] = []
+    per_round: list[dict[str, Any]] = []
+    for item in rounds:
+        policy = item.get("zta_policy") or {}
+        for key, value in policy.get("decision_counts", {}).items():
+            counts[key] += value
+        value = policy.get("policy_decision_correctness")
+        if value is not None:
+            correctness.append(value)
+        per_round.append(
+            {
+                "round": item.get("round"),
+                "attack_target_domain": policy.get("attack_target_domain"),
+                "policy_decision_correctness": value,
+                "per_domain": policy.get("per_domain", {}),
+            }
+        )
+    return {
+        "avg_policy_decision_correctness": _avg(correctness),
+        "decision_counts": dict(sorted(counts.items())),
+        "per_round": per_round,
+    }
+
+
 def _filters(rounds: list[dict]) -> dict[str, list[str]]:
     return {
         "attacks": _sorted_unique(item["attack"].get("name") for item in rounds),
@@ -263,6 +311,11 @@ def _filters(rounds: list[dict]) -> dict[str, list[str]]:
         "winner_sides": _sorted_unique(item["outcome"].get("winner_side") for item in rounds),
         "winner_details": _sorted_unique(item["outcome"].get("winner_detail") for item in rounds),
         "terminations": _sorted_unique(item["outcome"].get("termination_reason") for item in rounds),
+        "zta_decisions": _sorted_unique(
+            key
+            for item in rounds
+            for key in (item.get("zta_policy") or {}).get("decision_counts", {})
+        ),
     }
 
 
@@ -333,7 +386,7 @@ def _count_round_field(rounds: list[dict], group: str, key: str) -> dict[str, in
 
 
 def _sorted_unique(values: Any) -> list[str]:
-    return sorted(str(value) for value in values if value is not None)
+    return sorted({str(value) for value in values if value is not None})
 
 
 def _avg(values: list[Any]) -> float:

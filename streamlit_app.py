@@ -477,12 +477,14 @@ def _render_empty_state(log_path: Path) -> None:
 
 def _render_metric_tiles(summary: dict[str, Any], hash_valid: bool, logs: list[dict[str, Any]]) -> None:
     latest = logs[-1]
+    policy_correctness = _policy_correctness(summary, logs)
     tiles = [
         ("ROUNDS", str(summary.get("rounds", len(logs))), "episode frames", "#b8c2cf", 1.0),
         ("BLUE DETECTION", _pct(summary.get("detection_rate", 0.0)), "threats caught", "#4dd9a4", summary.get("detection_rate", 0.0)),
         ("RED EFFECT", _pct(summary.get("attack_success_rate", 0.0)), "mutations landed", "#ff4f3d", summary.get("attack_success_rate", 0.0)),
         ("GOAL SUCCESS", _pct(summary.get("goal_success_rate", 0.0)), "objective support", "#4f9cff", summary.get("goal_success_rate", 0.0)),
         ("MISSION IMPACT", _pct(summary.get("avg_mission_impact_score", 0.0)), "avg impact score", "#f6c04f", summary.get("avg_mission_impact_score", 0.0)),
+        ("ZTA POLICY", _pct(policy_correctness), "decision fit", "#8fb7ff", policy_correctness),
         ("AVAILABILITY", _number(summary.get("final_availability")), "mission budget", "#f6c04f", summary.get("final_availability", 0.0)),
         ("HASH CHAIN", "OK" if hash_valid else "FAIL", "log integrity", "#4dd9a4" if hash_valid else "#ff4f3d", 1.0),
     ]
@@ -592,6 +594,9 @@ def _render_brief_panel(
     step_count = selected.get("step_count", 1)
     termination = selected.get("termination_reason", "fixed_round")
     attrition = _attrition_evidence(selected)
+    policy = selected.get("zta_policy") or {}
+    policy_correct = policy.get("policy_decision_correctness")
+    policy_tone = "good" if (_float_or_none(policy_correct) or 0.0) >= 0.75 else "warn"
     chain_class = "good" if hash_valid else "bad"
 
     st.markdown(
@@ -611,6 +616,7 @@ def _render_brief_panel(
             {_brief_item("Steps", step_count, "neutral")}
             {_brief_item("Detection", "SUCCESS" if score.get("detection_success") else "MISSED", "good" if score.get("detection_success") else "bad")}
             {_brief_item("Recovery", "SUCCESS" if score.get("recovery_success") else "PENDING", "good" if score.get("recovery_success") else "warn")}
+            {_brief_item("Policy", _pct(policy_correct), policy_tone)}
             {_brief_item("Hash", "VERIFIED" if hash_valid else "FAILED", chain_class)}
           </div>
           <div class="brief-line">
@@ -623,6 +629,7 @@ def _render_brief_panel(
           <div class="summary-readout">
             Detection {_pct(summary.get("detection_rate", 0.0))} /
             Red effect {_pct(summary.get("attack_success_rate", 0.0))} /
+            ZTA policy {_pct(summary.get("avg_policy_decision_correctness", policy_correct))} /
             Mission impact {_pct(summary.get("avg_mission_impact_score", 0.0))} /
             Defense cost {_number(attrition.get("round_defense_cost"))} /
             Min availability {_number(summary.get("min_availability"))}
@@ -644,6 +651,11 @@ def _render_overview(logs: list[dict[str, Any]], summary: dict[str, Any]) -> Non
     with right:
         _section("Run summary", "aggregated scoring output")
         st.dataframe(_summary_rows(summary), width="stretch", hide_index=True)
+
+    zta_rows = _zta_round_rows(logs)
+    if zta_rows:
+        _section("Zero Trust policy", "per-round observe use decisions")
+        st.dataframe(zta_rows, width="stretch", hide_index=True)
 
     attack_counts = Counter(entry["attack"]["name"] for entry in logs)
     winner_counts = Counter(entry["score"]["winner"] for entry in logs)
@@ -711,6 +723,11 @@ def _render_timeline(logs: list[dict[str, Any]], selected_round: int) -> None:
                 st.markdown("**Combat steps**")
                 st.dataframe(_combat_step_rows(entry), width="stretch", hide_index=True)
 
+            zta_rows = _zta_timeline_rows(entry)
+            if zta_rows:
+                st.markdown("**Policy decision timeline**")
+                st.dataframe(zta_rows, width="stretch", hide_index=True)
+
             st.markdown("**Incident report**")
             st.json(entry["incident_report"], expanded=False)
 
@@ -757,6 +774,18 @@ def _render_charts(logs: list[dict[str, Any]]) -> None:
         y="mission_impact",
     )
 
+    policy_rows = [
+        {
+            "round": entry["round"],
+            "policy_decision_correctness": (entry.get("zta_policy") or {}).get("policy_decision_correctness"),
+        }
+        for entry in logs
+        if (entry.get("zta_policy") or {}).get("policy_decision_correctness") is not None
+    ]
+    if policy_rows:
+        _section("ZTA policy correctness", "restrict attacked domain without overblocking clean domains")
+        st.line_chart(policy_rows, x="round", y="policy_decision_correctness")
+
     col1, col2, col3 = st.columns(3)
     with col1:
         _section("Detection", "caught vs missed")
@@ -782,6 +811,11 @@ def _render_charts(logs: list[dict[str, Any]]) -> None:
                 "pending": sum(1 for entry in logs if not entry["score"].get("recovery_success")),
             }
         )
+
+    zta_counts = _zta_decision_counts(logs)
+    if zta_counts:
+        _section("ZTA decisions", "decision bands across rounds and combat steps")
+        st.bar_chart(zta_counts)
 
 
 def _render_decisions(logs: list[dict[str, Any]]) -> None:
@@ -811,6 +845,7 @@ def _scoreboard_rows(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "availability": entry["score"]["availability"],
             "goal_reward": entry["score"].get("goal_reward"),
             "mission_impact": _mission_impact_score(entry),
+            "policy_correctness": (entry.get("zta_policy") or {}).get("policy_decision_correctness"),
             "attrition": _attrition_evidence(entry).get("triggered"),
             "defense_cost": _attrition_evidence(entry).get("round_defense_cost"),
             "steps": entry.get("step_count"),
@@ -832,6 +867,8 @@ def _summary_rows(summary: dict[str, Any]) -> list[dict[str, str]]:
         "tactic_entropy",
         "avg_goal_reward",
         "avg_mission_impact_score",
+        "avg_policy_decision_correctness",
+        "zta_decision_counts",
         "high_mission_impact_count",
         "avg_causal_consistency",
         "causal_warning_count",
@@ -869,6 +906,31 @@ def _action_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _zta_round_rows(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for entry in logs:
+        policy = entry.get("zta_policy") or {}
+        per_domain = policy.get("per_domain") or {}
+        if not policy and not per_domain:
+            continue
+        domain_scores = {
+            domain: f'{item.get("decision")}:{_number(item.get("trust_score"))}'
+            for domain, item in sorted(per_domain.items())
+        }
+        restricted = [domain for domain, item in sorted(per_domain.items()) if item.get("restricted")]
+        rows.append(
+            {
+                "round": entry.get("round"),
+                "attack_target": policy.get("attack_target_domain"),
+                "correctness": policy.get("policy_decision_correctness"),
+                "restricted_domains": ", ".join(restricted) if restricted else "-",
+                "decision_counts": _compact(policy.get("decision_counts", {})),
+                "domain_scores": _compact(domain_scores),
+            }
+        )
+    return rows
+
+
 def _combat_step_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for step in entry.get("combat_steps", []):
@@ -889,9 +951,36 @@ def _combat_step_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
                 "blue_power": _number(budgets.get("blue_power_budget")),
                 "red_retries": budgets.get("red_retry_attempts"),
                 "defense_cost": _number(budgets.get("blue_round_defense_cost")),
+                "zta_min_trust": _number(_min_zta_trust(step.get("zta_decisions", []))),
+                "zta_restrictive": _restrictive_zta_domains(step.get("zta_decisions", [])),
                 "stable_steps": step.get("stable_steps"),
             }
         )
+
+    return rows
+
+
+def _zta_timeline_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    combat_steps = entry.get("combat_steps") or []
+    if combat_steps:
+        step_items = [(step.get("step"), step.get("zta_decisions", [])) for step in combat_steps]
+    else:
+        step_items = [(1, entry.get("zta_decisions", []))]
+
+    for step_number, decisions in step_items:
+        for item in decisions or []:
+            rows.append(
+                {
+                    "step": step_number,
+                    "domain": item.get("domain"),
+                    "decision": item.get("decision"),
+                    "trust_score": item.get("trust_score"),
+                    "allowed_use": item.get("allowed_use"),
+                    "restrictive": _is_restrictive_zta(item),
+                    "reasons": ", ".join(str(reason) for reason in item.get("reasons", [])),
+                }
+            )
     return rows
 
 
@@ -930,6 +1019,66 @@ def _attrition_evidence(entry: dict[str, Any]) -> dict[str, Any]:
     evidence = score.get("evidence") or {}
     attrition = evidence.get("attrition") or {}
     return attrition if isinstance(attrition, dict) else {}
+
+
+def _policy_correctness(summary: dict[str, Any], logs: list[dict[str, Any]]) -> float:
+    summary_value = _float_or_none(summary.get("avg_policy_decision_correctness"))
+    if summary_value is not None:
+        return summary_value
+    values = [
+        value
+        for value in (
+            _float_or_none((entry.get("zta_policy") or {}).get("policy_decision_correctness"))
+            for entry in logs
+        )
+        if value is not None
+    ]
+    return round(sum(values) / len(values), 4) if values else 0.0
+
+
+def _zta_decision_counts(logs: list[dict[str, Any]]) -> dict[str, int]:
+    counts = Counter()
+    for entry in logs:
+        policy_counts = (entry.get("zta_policy") or {}).get("decision_counts")
+        if policy_counts:
+            counts.update(policy_counts)
+            continue
+        for item in _entry_zta_decisions(entry):
+            decision = item.get("decision")
+            if decision:
+                counts[str(decision)] += 1
+    return dict(sorted(counts.items()))
+
+
+def _entry_zta_decisions(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    decisions = list(entry.get("zta_decisions", []) or [])
+    for step in entry.get("combat_steps", []) or []:
+        decisions.extend(step.get("zta_decisions", []) or [])
+    return decisions
+
+
+def _min_zta_trust(decisions: list[dict[str, Any]]) -> float | None:
+    values = [_float_or_none(item.get("trust_score")) for item in decisions or []]
+    values = [value for value in values if value is not None]
+    return min(values) if values else None
+
+
+def _restrictive_zta_domains(decisions: list[dict[str, Any]]) -> str:
+    domains = sorted({str(item.get("domain")) for item in decisions or [] if _is_restrictive_zta(item)})
+    return ", ".join(domains) if domains else "-"
+
+
+def _is_restrictive_zta(item: dict[str, Any]) -> bool:
+    return item.get("decision") in {"DOWNGRADE", "REVALIDATE", "QUARANTINE", "DENY"} or bool(
+        item.get("restrictive")
+    )
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1122,8 +1271,29 @@ def _inject_style() -> None:
           100% { transform: translateY(18px); }
         }
 
-        header[data-testid="stHeader"] { background: transparent; }
-        div[data-testid="stToolbar"] { display: none; }
+        header[data-testid="stHeader"] {
+          background: transparent;
+          pointer-events: auto;
+          z-index: 999;
+        }
+
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"],
+        button[title="Open sidebar"],
+        button[title="Close sidebar"],
+        button[aria-label="Open sidebar"],
+        button[aria-label="Close sidebar"] {
+          display: inline-flex !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          z-index: 1000 !important;
+        }
+
+        div[data-testid="stToolbar"] {
+          visibility: visible !important;
+          pointer-events: auto !important;
+        }
         .block-container {
           position: relative;
           z-index: 1;

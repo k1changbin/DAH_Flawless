@@ -6,6 +6,8 @@ raw-world signal bundle produced by ``dah_flawless.world.generator``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from dah_flawless.config import (
     AVAIL_FLOOR,
     CONFIDENCE_THRESHOLD,
@@ -27,6 +29,7 @@ def score_round(
     threat_history: list[list[Threat]] | None = None,
     recovery_history: list[dict[str, bool]] | None = None,
     red_goal: dict | None = None,
+    zta_decisions: list[Any] | None = None,
 ) -> Score:
     evidence = _attack_evidence(pre_defense_state, attack)
     attack_success = bool(evidence["mismatch"])
@@ -82,6 +85,7 @@ def score_round(
     evidence["mission_impact"] = mission_impact
     evidence["goal_score"] = goal_score
     evidence["attrition"] = attrition
+    evidence["zta_policy_decisions"] = _serialize_zta_decisions(zta_decisions)
     evidence["outcome"] = outcome
     return Score(
         winner=outcome["winner"],
@@ -99,6 +103,16 @@ def score_round(
         winner_detail=outcome["winner_detail"],
         outcome_reason=outcome["reason"],
     )
+
+
+def _serialize_zta_decisions(zta_decisions: list[Any] | None) -> list[dict]:
+    serialized: list[dict] = []
+    for item in zta_decisions or []:
+        if hasattr(item, "to_dict"):
+            serialized.append(item.to_dict())
+        elif isinstance(item, dict):
+            serialized.append(dict(item))
+    return serialized
 
 
 def _attack_evidence(state: dict, attack: Attack) -> dict:

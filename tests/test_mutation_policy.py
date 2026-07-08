@@ -4,7 +4,7 @@ from pathlib import Path
 from dah_flawless.attacks.catalog import get_attack
 from dah_flawless.attacks.mutation_policy import FIELD_POLICIES, FIELD_POLICY_BY_PATH, POLICY_SOURCE, MutationPolicyEnforcer
 from dah_flawless.attacks.mutations import apply_attack
-from dah_flawless.config import BASE_TIMESTAMP
+from dah_flawless.config import BASE_TIMESTAMP, MUTATION_PROFILES
 from dah_flawless.environment.state_factory import create_baseline_state
 
 
@@ -48,6 +48,35 @@ class MutationPolicyTests(unittest.TestCase):
         self.assertGreaterEqual(len(FIELD_POLICIES), 19)
         self.assertEqual(FIELD_POLICY_BY_PATH["navigation.hdop"].policy_id, "gnss_hdop")
         self.assertEqual(FIELD_POLICY_BY_PATH["c2_message.command"].policy_id, "c2_command")
+
+    def test_runtime_policy_has_no_cross_policy_path_conflicts(self):
+        by_path = {}
+        for policy in FIELD_POLICIES:
+            for path in policy.paths:
+                by_path.setdefault(_normalize_policy_path(path), set()).add(policy.policy_id)
+
+        conflicts = {path: sorted(policy_ids) for path, policy_ids in by_path.items() if len(policy_ids) > 1}
+        self.assertEqual(conflicts, {})
+
+    def test_runtime_policy_entries_have_required_profiles_and_safe_scopes(self):
+        allowed_kinds = {
+            "add_clamped",
+            "add_clamped_seconds",
+            "degrade_only",
+            "relative_or_absolute_clamped",
+            "set_clamped",
+            "set_enum",
+            "set_or_add_clamped",
+            "vector_shift_normalized",
+        }
+        forbidden_prefixes = ("internal_observe.", "state.world.", "raw_world.")
+
+        for policy in FIELD_POLICIES:
+            self.assertIn(policy.mutation_kind, allowed_kinds, policy.policy_id)
+            self.assertEqual(set(policy.profiles), set(MUTATION_PROFILES), policy.policy_id)
+            for path in policy.paths:
+                normalized = _normalize_policy_path(path)
+                self.assertFalse(normalized.startswith(forbidden_prefixes), (policy.policy_id, path))
 
     def test_runtime_policy_rejects_internal_observe_mutation(self):
         observed = {"internal_observe": {"telemetry": {"battery_percent": 20}}}
@@ -106,6 +135,16 @@ class MutationPolicyTests(unittest.TestCase):
         self.assertEqual(attacked["blue_observed"]["comms"]["latency_ms"], 1380)
         self.assertEqual(attacked["blue_observed"]["comms"]["packet_loss"], 0.25)
         self.assertTrue(any(decision["action"] == "clamped" for decision in log["policy_decisions"]))
+
+
+def _normalize_policy_path(path: str) -> str:
+    normalized = path
+    for prefix in ("blue_observed.", "external_observe."):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :]
+    if normalized.startswith("blue_observed.external_observe."):
+        normalized = normalized[len("blue_observed.external_observe.") :]
+    return normalized
 
 
 if __name__ == "__main__":

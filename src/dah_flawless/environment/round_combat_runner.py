@@ -27,6 +27,7 @@ from dah_flawless.blue.feedback_learner import (
 from dah_flawless.blue.incident_report import write_incident_report
 from dah_flawless.blue.mission_monitor import estimate_mission_risk
 from dah_flawless.blue.threat_detection import detect_threats
+from dah_flawless.blue.zero_trust_gate import evaluate_zero_trust, summarize_zta
 from dah_flawless.config import (
     DEFAULT_MUTATION_PROFILE,
     DEFAULT_ROUNDS,
@@ -258,6 +259,7 @@ class RoundCombatRunner:
         final_risks = []
         final_actions: list[DefenseAction] = []
         final_decision_logs: list[dict] = []
+        step_zta_decisions: list[list] = []
         termination_reason = "max_steps"
 
         for step_number in range(1, self.max_steps + 1):
@@ -283,7 +285,20 @@ class RoundCombatRunner:
                 candidate_threats,
                 export_blue_policy_state(red_state),
             )
-            suspicion = _max_confidence(candidate_threats)
+            # Zero Trust Observe Gate (PEP): decide how far each external observe
+            # resource may be trusted for mission judgement, before Mission
+            # Monitor / Defense Planner use it. The decision is logged for audit
+            # and exposed as low-cost policy action candidates.
+            zta_decisions, zta_log = evaluate_zero_trust(
+                redacted_for_blue["blue_observed"],
+                history,
+                redacted_for_blue["capabilities"],
+                redacted_for_blue["defense_runtime"].get("domain_trust", {}),
+                redacted_for_blue["mission"],
+                candidate_threats,
+            )
+            step_zta_decisions.append(zta_decisions)
+            suspicion = max(_max_confidence(candidate_threats), _zta_policy_suspicion(zta_decisions))
             blue_action = _plan_blue_step(
                 step_number=step_number,
                 suspicion=suspicion,
@@ -294,7 +309,7 @@ class RoundCombatRunner:
             recognized_threats = _recognized_threats_for_action(blue_action, candidate_threats)
             episode_situation_tags.update(candidate_tags)
             episode_recognized_threats.extend(recognized_threats)
-            risks, risk_log = estimate_mission_risk(redacted_for_blue, recognized_threats)
+            risks, risk_log = estimate_mission_risk(redacted_for_blue, recognized_threats, zta_decisions)
             post_blue_state = deepcopy(red_state)
             actions: list[DefenseAction] = []
             defense_log = _blue_idle_log(blue_action, recognized_threats, combat_memory)
@@ -304,6 +319,7 @@ class RoundCombatRunner:
                     risks,
                     red_state["mission"],
                     red_state["defense_runtime"],
+                    zta_decisions,
                 )
                 post_blue_state = apply_defense_actions(
                     red_state,
@@ -327,6 +343,7 @@ class RoundCombatRunner:
                 threat_history=recognized_threat_history,
                 recovery_history=recovery_history,
                 red_goal=red_goal,
+                zta_decisions=zta_decisions,
             )
             causal_consistency, causal_log = assess_causal_consistency(
                 attack=attack,
@@ -370,6 +387,7 @@ class RoundCombatRunner:
                 "blue_recognized_threats": [threat.to_dict() for threat in recognized_threats],
                 "blue_suspicion": suspicion,
                 "detected_this_step": detected_this_step,
+                "zta_decisions": [item.to_dict() for item in zta_decisions],
                 "defense_actions": [action.to_dict() for action in actions],
                 "step_score": score.to_dict(),
                 "causal_consistency": causal_consistency,
@@ -387,6 +405,7 @@ class RoundCombatRunner:
                 red_step_log,
                 threat_log,
                 policy_detection_log,
+                zta_log,
                 risk_log,
                 defense_log,
                 report_log,
@@ -460,6 +479,7 @@ class RoundCombatRunner:
                 after=red_agent.export_policy_state(),
             )
 
+        zta_policy = summarize_zta(step_zta_decisions, attack.target_domain)
         entry_without_hash = {
             "round": round_number,
             "seed": self.seed,
@@ -483,6 +503,7 @@ class RoundCombatRunner:
             "red_situation_tag_details": [detail.to_dict() for detail in tag_details],
             "combat_steps": step_logs,
             "combat_mutation_log": combat_mutation_log,
+            "zta_policy": zta_policy,
             "step_count": len(step_logs),
             "max_steps": self.max_steps,
             "termination_reason": termination_reason,
@@ -509,6 +530,7 @@ class RoundCombatRunner:
                 "goal_success": final_score.goal_success,
                 "goal_reward": final_score.goal_reward,
                 "mission_impact_score": final_score.evidence.get("mission_impact", {}).get("mission_impact_score"),
+                "policy_decision_correctness": zta_policy["policy_decision_correctness"],
                 "causal_consistency_score": final_causal["consistency_score"],
                 "causal_consistency_status": final_causal["status"],
                 "detection_success": final_score.detection_success,
@@ -932,6 +954,15 @@ def _detected_for_attack(attack: Attack, threats: list[Threat]) -> bool:
 
 def _max_confidence(threats: list[Threat]) -> float:
     return max((float(threat.confidence) for threat in threats), default=0.0)
+
+
+def _zta_policy_suspicion(decisions: list[Any]) -> float:
+    restrictive_scores = [
+        max(0.0, 1.0 - float(item.trust_score))
+        for item in decisions
+        if getattr(item, "restrictive", False)
+    ]
+    return round(max(restrictive_scores, default=0.0), 4)
 
 
 def _red_delta_scale(red_action: str, memory: CombatStepMemory) -> float:

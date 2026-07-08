@@ -37,6 +37,15 @@ def summarize_logs(logs: list[dict]) -> dict:
     ]
     attrition_net_costs = [float(item.get("net_defense_cost", 0.0)) for item in attrition_records]
     attrition_ratios = [float(item.get("defense_to_attack_cost_ratio", 0.0)) for item in attrition_records]
+    zta_policies = [entry.get("zta_policy", {}) for entry in logs if entry.get("zta_policy")]
+    zta_correctness = [
+        float(policy.get("policy_decision_correctness", 0.0))
+        for policy in zta_policies
+        if policy.get("policy_decision_correctness") is not None
+    ]
+    zta_decision_counts = Counter()
+    for policy in zta_policies:
+        zta_decision_counts.update(policy.get("decision_counts", {}))
 
     return {
         "rounds": len(logs),
@@ -65,6 +74,10 @@ def summarize_logs(logs: list[dict]) -> dict:
         "avg_attrition_defense_to_attack_ratio": round(sum(attrition_ratios) / len(attrition_ratios), 4)
         if attrition_ratios
         else 0.0,
+        "avg_policy_decision_correctness": round(sum(zta_correctness) / len(zta_correctness), 4)
+        if zta_correctness
+        else 0.0,
+        "zta_decision_counts": dict(sorted(zta_decision_counts.items())),
     }
 
 
