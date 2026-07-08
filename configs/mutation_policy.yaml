@@ -48,6 +48,8 @@ observe_scopes:
 global_forbidden_mutations:
   - field: "blue_observed.internal_observe.*"
     reason: "Internal observe is not directly reachable by Red."
+  - field: "blue_observed.external_observe.telemetry_channels.*"
+    reason: "Telemetry tx/rx channel projections are Red-readable intel only, not direct mutation surfaces."
   - field: "state.world.*"
     reason: "scorer_truth is scorer/admin only."
   - field: "raw_world.*"

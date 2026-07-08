@@ -6,11 +6,22 @@ from dah_flawless.blue.threat_detection import detect_threats
 from dah_flawless.environment.redaction import redact_state
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.state_factory import create_baseline_state, make_history
-from dah_flawless.observation import refresh_internal_observe_from_truth
+from dah_flawless.observation import refresh_internal_observe_from_truth, refresh_telemetry_channels
 from dah_flawless.schemas import DefenseAction, Threat
 
 
 class BlueGoalConsistencyTests(unittest.TestCase):
+    def test_baseline_telemetry_channel_checks_pass(self):
+        state = create_baseline_state(seed=1)
+
+        tags, threats, log = detect_threats(redact_state(state), make_history(state), state["capabilities"])
+        checks = log["after"]["telemetry_channel_checks"]
+
+        self.assertEqual(checks["failed_checks"], [])
+        self.assertNotIn("TELEMETRY_INTERNAL_TX_DISAGREE", tags)
+        self.assertNotIn("TELEMETRY_TX_RX_DISAGREE", tags)
+        self.assertFalse(any(threat.target == "telemetry" for threat in threats))
+
     def test_ack_causal_confusion_becomes_goal_effect_threat(self):
         state = create_baseline_state(seed=1)
         history = make_history(state)
@@ -41,6 +52,47 @@ class BlueGoalConsistencyTests(unittest.TestCase):
 
         self.assertIn("EFFECT_TELEMETRY_TRUST_EROSION", telemetry_threat.tags)
         self.assertIn("INTERNAL_EXTERNAL_TELEMETRY_DISAGREE", telemetry_threat.tags)
+
+    def test_telemetry_channel_checks_split_tx_rx_command_and_freshness(self):
+        state = create_baseline_state(seed=1)
+        history = make_history(state)
+        obs = state["blue_observed"]
+        obs["telemetry"]["battery_percent"] = 45
+        obs["telemetry"]["motor_status"] = "OK"
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        obs["c2_message"]["ack"]["sequence_number"] = obs["c2_message"]["sequence_number"] - 2
+        obs["comms"]["ack_delay_ms"] = 950
+        obs["comms"]["latency_ms"] = 540
+        obs["comms"]["packet_interval_jitter_ms"] = 460
+        refresh_telemetry_channels(obs)
+
+        tags, threats, log = detect_threats(redact_state(state), history, state["capabilities"])
+        checks = log["after"]["telemetry_channel_checks"]["checks"]
+        telemetry_threat = next(threat for threat in threats if threat.target == "telemetry")
+
+        self.assertEqual(checks["internal_vs_tx"]["status"], "PASS")
+        self.assertEqual(checks["tx_vs_rx"]["status"], "FAIL")
+        self.assertEqual(checks["rx_vs_command"]["status"], "FAIL")
+        self.assertIn(checks["freshness"]["status"], {"WARN", "FAIL"})
+        self.assertIn("TELEMETRY_TX_RX_DISAGREE", tags)
+        self.assertIn("TELEMETRY_RX_COMMAND_INCONSISTENT", tags)
+        self.assertIn("TELEMETRY_FRESHNESS_RISK", tags)
+        self.assertIn("TELEMETRY_TX_RX_DISAGREE", telemetry_threat.tags)
+        self.assertIn("TELEMETRY_RX_COMMAND_INCONSISTENT", telemetry_threat.tags)
+
+    def test_internal_vs_tx_projection_disagreement_is_separate_check(self):
+        state = create_baseline_state(seed=1)
+        history = make_history(state)
+        state["blue_observed"]["telemetry_channels"]["asset_tx_mirror"]["battery_percent"] = 35
+
+        tags, threats, log = detect_threats(redact_state(state), history, state["capabilities"])
+        checks = log["after"]["telemetry_channel_checks"]["checks"]
+        telemetry_threat = next(threat for threat in threats if threat.target == "telemetry")
+
+        self.assertEqual(checks["internal_vs_tx"]["status"], "FAIL")
+        self.assertEqual(checks["tx_vs_rx"]["status"], "FAIL")
+        self.assertIn("TELEMETRY_INTERNAL_TX_DISAGREE", tags)
+        self.assertIn("TELEMETRY_INTERNAL_TX_DISAGREE", telemetry_threat.tags)
 
     def test_safety_critical_telemetry_residual_becomes_threat(self):
         state = create_baseline_state(seed=1)

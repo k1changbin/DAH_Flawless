@@ -4,6 +4,7 @@ from dah_flawless.attacks.catalog import get_attack
 from dah_flawless.attacks.goal_planner import reward_from_score
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.environment.state_factory import create_baseline_state
+from dah_flawless.observation import refresh_telemetry_channels
 from dah_flawless.scoring.scorer import score_round
 
 
@@ -24,6 +25,9 @@ class GoalAwareScorerTests(unittest.TestCase):
         self.assertIn("avg_mission_impact_score", summary)
         self.assertIn("high_mission_impact_count", summary)
         self.assertIn("goals", summary)
+        self.assertIn("avg_telemetry_learning_signal", summary)
+        self.assertIn("telemetry_learning_axis_entropy", summary)
+        self.assertIn("telemetry_policy_diversity_contribution", summary)
 
     def test_wrong_target_goal_scores_priority_drift(self):
         state = create_baseline_state(seed=1)
@@ -87,6 +91,39 @@ class GoalAwareScorerTests(unittest.TestCase):
         self.assertEqual(goal_score["mission_impact_score"], impact["mission_impact_score"])
         self.assertEqual(goal_score["reward_algorithm"], "goal_reward_blended_with_mission_impact_v1")
         self.assertEqual(score.goal_reward, goal_score["goal_reward"])
+
+    def test_telemetry_goal_scores_indirect_tx_rx_command_axes(self):
+        state = create_baseline_state(seed=1)
+        obs = state["blue_observed"]
+        obs["c2_message"]["command"] = "CONTINUE_MISSION"
+        obs["c2_message"]["ack"]["sequence_number"] = obs["c2_message"]["sequence_number"] - 2
+        obs["comms"]["ack_delay_ms"] = 920
+        obs["comms"]["latency_ms"] = 620
+        obs["comms"]["packet_interval_jitter_ms"] = 360
+        obs["time"]["received_timestamp"] = state["world"]["time"]["true_timestamp"] - 90
+        refresh_telemetry_channels(obs)
+        attack = get_attack("TELEMETRY_FDI")
+
+        score = score_round(
+            state,
+            state,
+            attack,
+            threats=[],
+            actions=[],
+            red_goal={
+                "goal_id": "TELEMETRY_TRUST_EROSION",
+                "intended_effect": "confuse telemetry command safety",
+            },
+        )
+
+        goal_evidence = score.evidence["goal_score"]["evidence"]
+        self.assertTrue(score.goal_success)
+        self.assertEqual(goal_evidence["battery_delta"], 0.0)
+        self.assertFalse(goal_evidence["motor_mismatch"])
+        self.assertGreaterEqual(goal_evidence["telemetry_command_confusion"], 0.30)
+        self.assertGreaterEqual(goal_evidence["stale_state_acceptance"], 0.35)
+        self.assertGreaterEqual(goal_evidence["wrong_safety_decision"], 0.35)
+        self.assertIn("telemetry_learning_signal", goal_evidence)
 
     def test_goal_reward_is_used_by_feedback_reward(self):
         high_goal = {

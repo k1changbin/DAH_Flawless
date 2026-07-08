@@ -11,6 +11,11 @@ from typing import Any
 
 from dah_flawless.attacks.effect_contracts import score_contract_alignment
 from dah_flawless.schemas import Attack, DefenseAction, Threat
+from dah_flawless.scoring.telemetry_learning import (
+    telemetry_goal_effect_score,
+    telemetry_goal_success,
+    telemetry_learning_signal,
+)
 
 
 def score_red_goal(
@@ -54,7 +59,11 @@ def score_red_goal(
         goal_score["evidence"] = evidence
     goal_score["goal_reward"] = round(min(1.0, max(0.0, float(goal_score["goal_reward"]))), 4)
     goal_score["goal_success"] = bool(goal_score["goal_success"])
-    goal_score["algorithm"] = "goal_effect_contract_rule_score_v1"
+    goal_score["algorithm"] = (
+        "goal_effect_contract_rule_score_v2_telemetry_axes"
+        if goal_id == "TELEMETRY_TRUST_EROSION"
+        else "goal_effect_contract_rule_score_v1"
+    )
     return goal_score
 
 
@@ -84,21 +93,27 @@ def _score_wrong_target_selection(**ctx: Any) -> dict[str, Any]:
 
 
 def _score_telemetry_trust_erosion(**ctx: Any) -> dict[str, Any]:
-    truth = ctx["pre_defense_state"]["world"]["uav"]
-    observed = ctx["pre_defense_state"]["blue_observed"]["telemetry"]
-    battery_delta = abs(float(observed["battery_percent"]) - float(truth["battery_percent"]))
-    motor_mismatch = observed["motor_status"] != truth["motor_status"]
-    impossible_drain = float(observed.get("battery_drain_rate", 0.0)) >= 0.8 and observed["battery_percent"] > truth["battery_percent"]
-    effect_score = min(1.0, battery_delta / 35.0 + (0.25 if motor_mismatch else 0.0) + (0.20 if impossible_drain else 0.0))
+    signal = telemetry_learning_signal(ctx["pre_defense_state"], include_world_truth=True)
+    axis_scores = signal["axis_scores"]
+    legacy = signal["legacy_direct_evidence"]
+    indirect = signal["indirect_evidence"]
+    effect_score = telemetry_goal_effect_score(signal)
 
     return _goal_result(
         ctx,
         effect_score=effect_score,
-        goal_success=battery_delta >= 8.0 or motor_mismatch or impossible_drain,
+        goal_success=telemetry_goal_success(signal),
         evidence={
-            "battery_delta": round(battery_delta, 4),
-            "motor_mismatch": motor_mismatch,
-            "impossible_drain_hint": impossible_drain,
+            "telemetry_command_confusion": axis_scores["telemetry_command_confusion"],
+            "stale_state_acceptance": axis_scores["stale_state_acceptance"],
+            "wrong_safety_decision": axis_scores["wrong_safety_decision"],
+            "tx_rx_consistency_pressure": axis_scores["tx_rx_consistency_pressure"],
+            "legacy_sensor_delta": axis_scores["legacy_sensor_delta"],
+            "battery_delta": legacy["battery_delta"],
+            "motor_mismatch": legacy["motor_mismatch"],
+            "impossible_drain_hint": legacy["impossible_drain_hint"],
+            **indirect,
+            "telemetry_learning_signal": signal,
         },
     )
 

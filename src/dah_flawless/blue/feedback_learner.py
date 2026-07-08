@@ -7,9 +7,14 @@ from copy import deepcopy
 from dah_flawless.blue.goal_consistency import EFFECT_TAGS, effect_id_from_goal_id, effect_ids_from_tags
 from dah_flawless.config import LOW_CONFIDENCE_THRESHOLD
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
+from dah_flawless.scoring.telemetry_learning import (
+    TELEMETRY_AXIS_DEFAULT_THRESHOLDS,
+    TELEMETRY_LEARNING_AXIS_WEIGHTS,
+)
 from dah_flawless.schemas import DefenseAction, Score, Threat, decision
 
 DOMAINS = ("telemetry", "mission", "command")
+TELEMETRY_POLICY_AXES = tuple(TELEMETRY_LEARNING_AXIS_WEIGHTS)
 MIN_DOMAIN_TRUST = 0.12
 MIN_SENSITIVITY = 0.80
 MAX_SENSITIVITY = 1.30
@@ -17,12 +22,29 @@ MIN_ESCALATION_THRESHOLD = 0.58
 MAX_ESCALATION_THRESHOLD = 0.86
 MIN_EFFECT_THRESHOLD = 0.54
 MAX_EFFECT_THRESHOLD = 0.86
+MIN_TELEMETRY_AXIS_THRESHOLD = 0.20
+MAX_TELEMETRY_AXIS_THRESHOLD = 0.75
 MEDIUM_MISSION_IMPACT_THRESHOLD = 0.45
 HIGH_MISSION_IMPACT_THRESHOLD = 0.75
 MISSION_IMPACT_EMA_ALPHA = 0.35
 MAX_IMPACT_SENSITIVITY_BONUS = 0.04
 MAX_IMPACT_THRESHOLD_BONUS = 0.02
 META_GOAL_EFFECTS = {"EFFECT_DETECTION_BOUNDARY_PROBE"}
+TELEMETRY_TAG_AXIS_MAP = {
+    "TELEMETRY_MEMORY_COMMAND_CONFUSION": ("telemetry_command_confusion",),
+    "TELEMETRY_RX_COMMAND_INCONSISTENT": ("telemetry_command_confusion",),
+    "ACK_TIMING_ANOMALY": ("telemetry_command_confusion", "stale_state_acceptance"),
+    "TELEMETRY_FRESHNESS_RISK": ("stale_state_acceptance",),
+    "PACKET_INTERVAL_ANOMALY": ("stale_state_acceptance",),
+    "HIGH_LATENCY": ("stale_state_acceptance",),
+    "TELEMETRY_SAFETY_ANCHOR_RESIDUAL": ("wrong_safety_decision",),
+    "BATTERY_MOTOR_INCONSISTENT": ("wrong_safety_decision", "legacy_sensor_delta"),
+    "BATTERY_ENERGY_IMPOSSIBLE": ("wrong_safety_decision", "legacy_sensor_delta"),
+    "TELEMETRY_INTERNAL_TX_DISAGREE": ("tx_rx_consistency_pressure",),
+    "TELEMETRY_TX_RX_DISAGREE": ("tx_rx_consistency_pressure",),
+    "INTERNAL_EXTERNAL_TELEMETRY_DISAGREE": ("tx_rx_consistency_pressure", "legacy_sensor_delta"),
+    "TELEMETRY_CONFLICT": ("tx_rx_consistency_pressure", "legacy_sensor_delta"),
+}
 
 
 def default_blue_policy_state() -> dict:
@@ -34,6 +56,10 @@ def default_blue_policy_state() -> dict:
         "effect_threshold": {effect: LOW_CONFIDENCE_THRESHOLD for effect in EFFECT_TAGS},
         "effect_mission_impact_ema": {effect: 0.0 for effect in EFFECT_TAGS},
         "effect_mission_impact_counts": {effect: 0 for effect in EFFECT_TAGS},
+        "telemetry_axis_sensitivity": {axis: 1.0 for axis in TELEMETRY_POLICY_AXES},
+        "telemetry_axis_threshold": {
+            axis: TELEMETRY_AXIS_DEFAULT_THRESHOLDS[axis] for axis in TELEMETRY_POLICY_AXES
+        },
         "feedback_counts": {
             domain: {
                 "missed_attack": 0,
@@ -54,6 +80,15 @@ def default_blue_policy_state() -> dict:
             }
             for effect in EFFECT_TAGS
         },
+        "telemetry_axis_feedback_counts": {
+            axis: {
+                "missed_axis": 0,
+                "detected_axis": 0,
+                "recovered_axis": 0,
+                "false_positive_axis": 0,
+            }
+            for axis in TELEMETRY_POLICY_AXES
+        },
     }
 
 
@@ -71,6 +106,11 @@ def normalize_blue_policy_state(policy_state: dict | None) -> dict:
         for effect, value in policy_state.get(key, {}).items():
             if effect in normalized[key]:
                 normalized[key][effect] = float(value)
+
+    for key in ("telemetry_axis_sensitivity", "telemetry_axis_threshold"):
+        for axis, value in policy_state.get(key, {}).items():
+            if axis in normalized[key]:
+                normalized[key][axis] = float(value)
 
     for effect, value in policy_state.get("effect_mission_impact_ema", {}).items():
         if effect in normalized["effect_mission_impact_ema"]:
@@ -94,6 +134,13 @@ def normalize_blue_policy_state(policy_state: dict | None) -> dict:
             if name in normalized["effect_feedback_counts"][effect]:
                 normalized["effect_feedback_counts"][effect][name] = int(value)
 
+    for axis, counts in policy_state.get("telemetry_axis_feedback_counts", {}).items():
+        if axis not in normalized["telemetry_axis_feedback_counts"]:
+            continue
+        for name, value in counts.items():
+            if name in normalized["telemetry_axis_feedback_counts"][axis]:
+                normalized["telemetry_axis_feedback_counts"][axis][name] = int(value)
+
     _clamp_policy(normalized)
     return normalized
 
@@ -108,8 +155,11 @@ def apply_blue_policy_state(state: dict, policy_state: dict | None) -> None:
     runtime["effect_threshold"] = deepcopy(policy["effect_threshold"])
     runtime["effect_mission_impact_ema"] = deepcopy(policy["effect_mission_impact_ema"])
     runtime["effect_mission_impact_counts"] = deepcopy(policy["effect_mission_impact_counts"])
+    runtime["telemetry_axis_sensitivity"] = deepcopy(policy["telemetry_axis_sensitivity"])
+    runtime["telemetry_axis_threshold"] = deepcopy(policy["telemetry_axis_threshold"])
     runtime["feedback_counts"] = deepcopy(policy["feedback_counts"])
     runtime["effect_feedback_counts"] = deepcopy(policy["effect_feedback_counts"])
+    runtime["telemetry_axis_feedback_counts"] = deepcopy(policy["telemetry_axis_feedback_counts"])
 
 
 def export_blue_policy_state(state: dict) -> dict:
@@ -123,8 +173,11 @@ def export_blue_policy_state(state: dict) -> dict:
             "effect_threshold": runtime.get("effect_threshold", {}),
             "effect_mission_impact_ema": runtime.get("effect_mission_impact_ema", {}),
             "effect_mission_impact_counts": runtime.get("effect_mission_impact_counts", {}),
+            "telemetry_axis_sensitivity": runtime.get("telemetry_axis_sensitivity", {}),
+            "telemetry_axis_threshold": runtime.get("telemetry_axis_threshold", {}),
             "feedback_counts": runtime.get("feedback_counts", {}),
             "effect_feedback_counts": runtime.get("effect_feedback_counts", {}),
+            "telemetry_axis_feedback_counts": runtime.get("telemetry_axis_feedback_counts", {}),
         }
     )
 
@@ -141,7 +194,12 @@ def apply_detection_policy(threats: list[Threat], policy_state: dict | None) -> 
             [policy["effect_sensitivity"].get(effect_id, 1.0) for effect_id in effect_ids],
             default=1.0,
         )
-        sensitivity = domain_sensitivity * effect_sensitivity
+        telemetry_axes = _telemetry_axes_from_tags(threat.tags) if threat.target == "telemetry" else []
+        axis_sensitivity = max(
+            [policy["telemetry_axis_sensitivity"].get(axis, 1.0) for axis in telemetry_axes],
+            default=1.0,
+        )
+        sensitivity = domain_sensitivity * effect_sensitivity * axis_sensitivity
         confidence = round(min(0.99, max(0.01, threat.confidence * sensitivity)), 3)
         adjusted.append(
             Threat(
@@ -164,6 +222,8 @@ def apply_detection_policy(threats: list[Threat], policy_state: dict | None) -> 
             "effect_sensitivity": deepcopy(policy["effect_sensitivity"]),
             "effect_threshold": deepcopy(policy["effect_threshold"]),
             "effect_mission_impact_ema": deepcopy(policy["effect_mission_impact_ema"]),
+            "telemetry_axis_sensitivity": deepcopy(policy["telemetry_axis_sensitivity"]),
+            "telemetry_axis_threshold": deepcopy(policy["telemetry_axis_threshold"]),
         },
     )
 
@@ -195,6 +255,7 @@ def update_blue_policy(
     scorer_goal_effect_id = _score_effect_id(score)
     seen_effect_ids = set(_threat_effect_ids(threats))
     mission_impact_feedback = _mission_impact_feedback(score, scorer_goal_effect_id)
+    telemetry_axis_feedback = _telemetry_axis_feedback(score, threats)
     goal_effect_id, training_effect_reason = _training_effect_id_for_feedback(
         scorer_goal_effect_id,
         mission_impact_feedback,
@@ -208,6 +269,7 @@ def update_blue_policy(
     impact_threshold_bonus = _impact_scaled_bonus(impact_score, MAX_IMPACT_THRESHOLD_BONUS)
     reason = "stable_detection"
     effect_reason = None
+    telemetry_axis_reason = None
 
     if score.attack_success and not score.detection_success:
         counts["missed_attack"] += 1
@@ -275,6 +337,15 @@ def update_blue_policy(
         if (score.recovery_success or containment_score >= 0.65) and effect_seen:
             effect_counts["recovered_effect"] += 1
 
+    telemetry_axis_reason = _update_telemetry_axis_policy(
+        policy=policy,
+        feedback=telemetry_axis_feedback,
+        score=score,
+        containment_score=containment_score,
+        impact_sensitivity_bonus=impact_sensitivity_bonus,
+        impact_threshold_bonus=impact_threshold_bonus,
+    )
+
     if score.recovery_success or containment_score >= 0.65:
         counts["recovered"] += 1
 
@@ -287,6 +358,9 @@ def update_blue_policy(
             _adjust_effect(policy, effect_id, sensitivity_delta=-0.03, threshold_delta=0.02)
         if seen_effect_ids:
             effect_reason = f"{effect_reason or 'effect_detected'}_with_cost_control"
+        for axis in _telemetry_axes_from_threats(threats):
+            _adjust_telemetry_axis(policy, axis, sensitivity_delta=-0.02, threshold_delta=0.015)
+            telemetry_axis_reason = f"{telemetry_axis_reason or 'axis_detected'}_with_cost_control"
 
     pre_review_clamp = deepcopy(policy)
     _clamp_policy(policy)
@@ -312,6 +386,7 @@ def update_blue_policy(
             "goal_effect_seen": effect_seen,
             "seen_effect_ids": sorted(seen_effect_ids),
             "mission_impact_feedback": mission_impact_feedback,
+            "telemetry_axis_feedback": telemetry_axis_feedback,
             "mission_impact_score": impact_score,
             "over_defense": action_cost >= 0.10,
             "action_cost": action_cost,
@@ -330,6 +405,8 @@ def update_blue_policy(
             "policy_state": deepcopy(policy),
             "action_cost": action_cost,
             "effect_update_reason": effect_reason,
+            "telemetry_axis_update_reason": telemetry_axis_reason,
+            "telemetry_axis_feedback": telemetry_axis_feedback,
             "mission_impact_feedback": mission_impact_feedback,
             "saturation_guard": saturation_guard,
             "score": score.to_dict(),
@@ -376,6 +453,90 @@ def _adjust_effect(
 ) -> None:
     policy["effect_sensitivity"][effect_id] += sensitivity_delta
     policy["effect_threshold"][effect_id] += threshold_delta
+
+
+def _adjust_telemetry_axis(
+    policy: dict,
+    axis: str,
+    *,
+    sensitivity_delta: float,
+    threshold_delta: float,
+) -> None:
+    if axis not in policy["telemetry_axis_sensitivity"]:
+        return
+    policy["telemetry_axis_sensitivity"][axis] += sensitivity_delta
+    policy["telemetry_axis_threshold"][axis] += threshold_delta
+
+
+def _telemetry_axis_feedback(score: Score, threats: list[Threat]) -> dict:
+    if score.target_domain != "telemetry":
+        return {"skipped": True, "reason": "non_telemetry_domain"}
+
+    signal = _telemetry_learning_signal_from_score(score)
+    axis_scores = signal.get("axis_scores", {}) if signal else {}
+    dominant_axis = signal.get("dominant_axis") if signal else None
+    if dominant_axis not in TELEMETRY_POLICY_AXES:
+        return {"skipped": True, "reason": "no_telemetry_learning_signal"}
+
+    axes_seen = _telemetry_axes_from_threats(threats)
+    axis_score = round(float(axis_scores.get(dominant_axis, 0.0)), 4)
+    return {
+        "skipped": False,
+        "dominant_axis": dominant_axis,
+        "dominant_axis_score": axis_score,
+        "axis_scores": {axis: round(float(axis_scores.get(axis, 0.0)), 4) for axis in TELEMETRY_POLICY_AXES},
+        "active_axes": list(signal.get("active_axes", [])),
+        "axis_entropy": signal.get("axis_entropy", 0.0),
+        "blue_policy_learning_value": signal.get("blue_policy_learning_value", 0.0),
+        "axes_seen_in_threats": axes_seen,
+        "dominant_axis_seen": dominant_axis in axes_seen,
+    }
+
+
+def _update_telemetry_axis_policy(
+    *,
+    policy: dict,
+    feedback: dict,
+    score: Score,
+    containment_score: float,
+    impact_sensitivity_bonus: float,
+    impact_threshold_bonus: float,
+) -> str | None:
+    if feedback.get("skipped"):
+        return None
+
+    axis = feedback["dominant_axis"]
+    axis_seen = bool(feedback["dominant_axis_seen"])
+    counts = policy["telemetry_axis_feedback_counts"][axis]
+
+    if score.goal_success and not axis_seen:
+        counts["missed_axis"] += 1
+        _adjust_telemetry_axis(
+            policy,
+            axis,
+            sensitivity_delta=0.05 + impact_sensitivity_bonus * 0.50,
+            threshold_delta=-0.03 - impact_threshold_bonus * 0.50,
+        )
+        return "missed_telemetry_axis_raise_sensitivity"
+
+    if score.goal_success and axis_seen:
+        counts["detected_axis"] += 1
+        _adjust_telemetry_axis(
+            policy,
+            axis,
+            sensitivity_delta=0.015 + impact_sensitivity_bonus * 0.25,
+            threshold_delta=-impact_threshold_bonus * 0.25,
+        )
+        if score.recovery_success or containment_score >= 0.65:
+            counts["recovered_axis"] += 1
+        return "detected_telemetry_axis_reinforce"
+
+    if score.false_positive and axis_seen:
+        counts["false_positive_axis"] += 1
+        _adjust_telemetry_axis(policy, axis, sensitivity_delta=-0.04, threshold_delta=0.025)
+        return "false_positive_telemetry_axis_reduce_sensitivity"
+
+    return None
 
 
 def _record_effect_mission_impact(policy: dict, effect_id: str, impact_score: float) -> None:
@@ -472,6 +633,8 @@ def _policy_tunables(policy: dict) -> dict:
         "escalation_threshold": deepcopy(policy["escalation_threshold"]),
         "effect_sensitivity": deepcopy(policy["effect_sensitivity"]),
         "effect_threshold": deepcopy(policy["effect_threshold"]),
+        "telemetry_axis_sensitivity": deepcopy(policy["telemetry_axis_sensitivity"]),
+        "telemetry_axis_threshold": deepcopy(policy["telemetry_axis_threshold"]),
     }
 
 
@@ -484,6 +647,10 @@ def _apply_tunables(policy: dict, tunables: dict) -> None:
         for effect_id in EFFECT_TAGS:
             if effect_id in tunables.get(key, {}):
                 policy[key][effect_id] = tunables[key][effect_id]
+    for key in ("telemetry_axis_sensitivity", "telemetry_axis_threshold"):
+        for axis in TELEMETRY_POLICY_AXES:
+            if axis in tunables.get(key, {}):
+                policy[key][axis] = tunables[key][axis]
 
 
 def _clamp_policy(policy: dict) -> None:
@@ -509,6 +676,22 @@ def _clamp_policy(policy: dict) -> None:
             0,
             int(policy["effect_mission_impact_counts"][effect_id]),
         )
+    for axis in TELEMETRY_POLICY_AXES:
+        policy["telemetry_axis_sensitivity"][axis] = round(
+            min(MAX_SENSITIVITY, max(MIN_SENSITIVITY, policy["telemetry_axis_sensitivity"][axis])), 4
+        )
+        policy["telemetry_axis_threshold"][axis] = round(
+            min(
+                MAX_TELEMETRY_AXIS_THRESHOLD,
+                max(MIN_TELEMETRY_AXIS_THRESHOLD, policy["telemetry_axis_threshold"][axis]),
+            ),
+            4,
+        )
+        for count_name in policy["telemetry_axis_feedback_counts"][axis]:
+            policy["telemetry_axis_feedback_counts"][axis][count_name] = max(
+                0,
+                int(policy["telemetry_axis_feedback_counts"][axis][count_name]),
+            )
 
 
 def _saturation_guard_report(before: dict, after: dict) -> dict:
@@ -539,8 +722,38 @@ def _score_effect_id(score: Score) -> str | None:
     return effect_id_from_goal_id(goal_score.get("goal_id"))
 
 
+def _telemetry_learning_signal_from_score(score: Score) -> dict:
+    evidence = score.evidence or {}
+    goal_score = evidence.get("goal_score", {})
+    goal_evidence = goal_score.get("evidence", {}) if isinstance(goal_score, dict) else {}
+    signal = goal_evidence.get("telemetry_learning_signal")
+    if isinstance(signal, dict):
+        return signal
+
+    mission_impact = evidence.get("mission_impact", {})
+    telemetry_component = (mission_impact.get("components") or {}).get("telemetry_safety", {})
+    signal = telemetry_component.get("telemetry_learning_signal")
+    return signal if isinstance(signal, dict) else {}
+
+
 def _threat_effect_ids(threats: list[Threat]) -> list[str]:
     effect_ids: list[str] = []
     for threat in threats:
         effect_ids.extend(effect_ids_from_tags(threat.tags))
     return sorted(set(effect_ids))
+
+
+def _telemetry_axes_from_threats(threats: list[Threat]) -> list[str]:
+    axes: set[str] = set()
+    for threat in threats:
+        if threat.target != "telemetry":
+            continue
+        axes.update(_telemetry_axes_from_tags(threat.tags))
+    return sorted(axes)
+
+
+def _telemetry_axes_from_tags(tags: tuple[str, ...] | list[str]) -> list[str]:
+    axes: set[str] = set()
+    for tag in tags:
+        axes.update(TELEMETRY_TAG_AXIS_MAP.get(tag, ()))
+    return sorted(axis for axis in axes if axis in TELEMETRY_POLICY_AXES)

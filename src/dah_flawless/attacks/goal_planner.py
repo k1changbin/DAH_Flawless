@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from math import log, sqrt
 from typing import Any
 
+from dah_flawless.scoring.telemetry_learning import telemetry_learning_signal
 from dah_flawless.schemas import Score, SituationTag
 
 GOAL_DIVERSITY_WINDOW = 6
@@ -101,11 +102,23 @@ GOAL_CATALOG: tuple[GoalSpec, ...] = (
     GoalSpec(
         goal_id="TELEMETRY_TRUST_EROSION",
         target_domain="telemetry",
-        intended_effect="make external telemetry conflict with mission physics or internal trust anchors",
+        intended_effect="use read-only telemetry tx/rx memory to confuse command, ack, freshness, or safety interpretation",
         preferred_attacks=("TELEMETRY_FDI",),
         preferred_tactics=("telemetry_false_data", "boundary_probe", "confidence_spoofing", "internal_external_gap_shaping"),
-        preferred_tags=("CROSS_CHECK_UNAVAILABLE", "GNSS_PRIMARY", "TELEMETRY_CONFLICT", "BATTERY_ENERGY_IMPOSSIBLE"),
-        cyber_effects=("sensor_belief_drift", "cross_check_exhaustion", "telemetry_false_data"),
+        preferred_tags=(
+            "CROSS_CHECK_UNAVAILABLE",
+            "GNSS_PRIMARY",
+            "ACK_CHANNEL_VISIBLE",
+            "ACK_TIMING_ANOMALY",
+            "TELEMETRY_RX_COMMAND_INCONSISTENT",
+            "TELEMETRY_FRESHNESS_RISK",
+        ),
+        cyber_effects=(
+            "telemetry_command_confusion",
+            "stale_state_acceptance",
+            "wrong_safety_decision",
+            "tx_rx_consistency_pressure",
+        ),
         mission_impact=0.86,
         detectability_risk=0.66,
         policy_risk=0.15,
@@ -414,10 +427,20 @@ def _world_fit(goal: GoalSpec, observed_state: dict, previous_logs: list[dict]) 
         score += 0.1 if mission.get("trust_budget", 1.0) < 0.9 else 0.0
         return round(min(1.0, score), 4)
     if goal.goal_id == "TELEMETRY_TRUST_EROSION":
-        score = 0.24
-        score += 0.25 if capabilities.get("cross_check_telemetry") in {"DEGRADED", "UNAVAILABLE"} else 0.0
-        score += 0.16 if navigation.get("gnss_fix_quality") == "NORMAL" else 0.0
-        score += 0.10 if telemetry.get("battery_drain_rate", 0.0) >= 0.8 else 0.0
+        learning_signal = telemetry_learning_signal(obs, include_world_truth=False)
+        axes = learning_signal["axis_scores"]
+        indirect_score = float(learning_signal["indirect_evidence"].get("indirect_effect_score", 0.0))
+        active_axis_bonus = min(0.08, 0.03 * len(learning_signal.get("active_axes", [])))
+        score = 0.20
+        score += axes["telemetry_command_confusion"] * 0.18
+        score += axes["stale_state_acceptance"] * 0.16
+        score += axes["wrong_safety_decision"] * 0.16
+        score += axes["tx_rx_consistency_pressure"] * 0.12
+        score += indirect_score * 0.14
+        score += active_axis_bonus
+        score += 0.10 if capabilities.get("cross_check_telemetry") in {"DEGRADED", "UNAVAILABLE"} else 0.0
+        score += 0.06 if navigation.get("gnss_fix_quality") == "NORMAL" else 0.0
+        score += 0.04 if telemetry.get("battery_drain_rate", 0.0) >= 0.8 else 0.0
         return round(min(1.0, score), 4)
     if goal.goal_id == "BLUE_OVERDEFENSE_ATTRITION":
         recent_cost = _recent_defense_cost(previous_logs)

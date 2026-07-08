@@ -74,7 +74,7 @@ It is not coherent evidence for stale command acceptance, ACK confusion, or tele
 
 ### TELEMETRY_FDI
 
-Purpose: external telemetry trust erosion.
+Purpose: telemetry-memory-assisted trust erosion without direct telemetry mutation.
 
 Supported goals:
 
@@ -84,26 +84,43 @@ Supported goals:
 
 Mutation paths:
 
-- `telemetry.battery_percent`
-- `telemetry.motor_status`
+- `c2_message.command`
+- `c2_message.ack.sequence_number`
+- `c2_message.ack.status`
+- `comms.latency_ms`
+- `comms.packet_interval_jitter_ms`
+- `comms.ack_delay_ms`
 
 Expected tags:
 
-- `TELEMETRY_CONFLICT`
-- `BATTERY_MOTOR_INCONSISTENT`
-- `BATTERY_ENERGY_IMPOSSIBLE`
-- `IMU_TELEMETRY_DIVERGENCE`
 - `CROSS_CHECK_UNAVAILABLE`
 - `GNSS_PRIMARY`
+- `ACK_CHANNEL_VISIBLE`
+- `ACK_TIMING_ANOMALY`
+- `PACKET_INTERVAL_ANOMALY`
+- `HIGH_LATENCY`
+- `TELEMETRY_RX_COMMAND_INCONSISTENT`
+- `TELEMETRY_FRESHNESS_RISK`
 
 Success evidence:
 
-- `battery_delta`
-- `motor_mismatch`
-- `impossible_drain_hint`
+- `telemetry_command_confusion`
+- `stale_state_acceptance`
+- `wrong_safety_decision`
+- `tx_rx_consistency_pressure`
+- `telemetry_learning_signal`
+- `telemetry_memory_anchor_present`
+- `ack_gap`
+- `ack_delay_ms`
+- `latency_ms`
+- `packet_interval_jitter_ms`
+- `legacy_sensor_delta`
 
-This contract models false-data effects against external telemetry belief.
-The defensive anchor is cross-checking against internal observe and physical consistency.
+This contract models Red reading telemetry tx/rx history as read-only intelligence,
+then causing bounded command/ACK/timing ambiguity. Telemetry channel projections remain
+excluded from the mutation path. `battery_delta` and `motor_mismatch` remain legacy
+evidence fields, but the scorer's primary TELEMETRY_FDI success evidence is now
+command confusion, stale-state acceptance, and wrong safety decision pressure.
 
 ### TIME_DESYNC_REPLAY
 

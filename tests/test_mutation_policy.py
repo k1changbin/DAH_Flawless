@@ -65,8 +65,25 @@ class MutationPolicyTests(unittest.TestCase):
         self.assertEqual(observed["internal_observe"]["telemetry"]["battery_percent"], 20)
         self.assertFalse(policy.decision_dicts()[0]["approved"])
 
-    def test_runtime_policy_clamps_stealth_telemetry_probe(self):
+    def test_runtime_policy_rejects_telemetry_channel_projection_mutation(self):
+        observed = {"telemetry_channels": {"asset_tx_mirror": {"battery_percent": 20}}}
+        policy = MutationPolicyEnforcer("aggressive")
+
+        applied = policy.set_absolute(
+            observed,
+            "telemetry_channels.asset_tx_mirror.battery_percent",
+            99,
+            value_min=0,
+            value_max=100,
+        )
+
+        self.assertEqual(applied, 20)
+        self.assertEqual(observed["telemetry_channels"]["asset_tx_mirror"]["battery_percent"], 20)
+        self.assertFalse(policy.decision_dicts()[0]["approved"])
+
+    def test_runtime_policy_clamps_stealth_telemetry_memory_probe(self):
         state = create_baseline_state(seed=1)
+        before_telemetry = dict(state["blue_observed"]["telemetry"])
 
         attacked, log = apply_attack(
             state,
@@ -76,12 +93,15 @@ class MutationPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(log["mutation_profile"], "stealth")
-        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 28)
-        battery_decision = next(
-            decision for decision in log["policy_decisions"] if decision["path"] == "telemetry.battery_percent"
+        self.assertEqual(attacked["blue_observed"]["telemetry"], before_telemetry)
+        self.assertEqual(attacked["blue_observed"]["c2_message"]["ack"]["sequence_number"], 1020)
+        self.assertEqual(attacked["blue_observed"]["comms"]["ack_delay_ms"], 510)
+        ack_decision = next(
+            decision for decision in log["policy_decisions"] if decision["path"] == "c2_message.ack.sequence_number"
         )
-        self.assertEqual(battery_decision["action"], "clamped")
-        self.assertEqual(battery_decision["applied_delta"], 8)
+        self.assertEqual(ack_decision["action"], "clamped")
+        self.assertEqual(ack_decision["applied_delta"], -1)
+        self.assertFalse(any(decision["path"].startswith("telemetry.") for decision in log["policy_decisions"]))
 
     def test_runtime_policy_clamps_time_desync_params(self):
         state = create_baseline_state(seed=1)

@@ -16,6 +16,7 @@ from dah_flawless.blue.observe_policy_gate import (
     domain_use_weight,
 )
 from dah_flawless.config import AVAIL_FLOOR
+from dah_flawless.scoring.telemetry_learning import telemetry_learning_signal
 from dah_flawless.schemas import Attack, DefenseAction
 
 
@@ -99,6 +100,8 @@ def _mission_belief_impact(state: dict) -> dict[str, Any]:
 def _telemetry_safety_impact(state: dict) -> dict[str, Any]:
     truth = state["world"]
     observed = state["blue_observed"]["telemetry"]
+    learning_signal = telemetry_learning_signal(state, include_world_truth=True)
+    axes = learning_signal["axis_scores"]
     true_battery = float(truth["uav"]["battery_percent"])
     observed_battery = float(observed["battery_percent"])
     battery_delta = abs(observed_battery - true_battery)
@@ -107,7 +110,7 @@ def _telemetry_safety_impact(state: dict) -> dict[str, Any]:
     false_continue_margin = return_required and true_battery <= 25 and observed_battery >= 45
     hidden_fault = truth["uav"]["motor_status"] != "OK" and observed["motor_status"] == "OK"
     impossible_energy = observed_battery > true_battery and float(observed.get("battery_drain_rate", 0.0)) > 0
-    score = min(
+    direct_score = min(
         1.0,
         battery_delta / 60.0
         + (0.30 if false_continue_margin else 0.0)
@@ -115,8 +118,24 @@ def _telemetry_safety_impact(state: dict) -> dict[str, Any]:
         + (0.18 if hidden_fault else 0.0)
         + (0.10 if impossible_energy else 0.0),
     )
+    split_channel_score = min(
+        1.0,
+        axes["telemetry_command_confusion"] * 0.30
+        + axes["stale_state_acceptance"] * 0.18
+        + axes["wrong_safety_decision"] * 0.42
+        + axes["tx_rx_consistency_pressure"] * 0.07
+        + axes["legacy_sensor_delta"] * 0.03,
+    )
+    score = max(direct_score, split_channel_score)
     return {
         "score": round(score, 4),
+        "direct_safety_score": round(direct_score, 4),
+        "split_channel_safety_score": round(split_channel_score, 4),
+        "telemetry_command_confusion": axes["telemetry_command_confusion"],
+        "stale_state_acceptance": axes["stale_state_acceptance"],
+        "wrong_safety_decision": axes["wrong_safety_decision"],
+        "tx_rx_consistency_pressure": axes["tx_rx_consistency_pressure"],
+        "legacy_sensor_delta": axes["legacy_sensor_delta"],
         "true_battery_percent": true_battery,
         "observed_battery_percent": observed_battery,
         "battery_delta": round(battery_delta, 4),
@@ -124,6 +143,7 @@ def _telemetry_safety_impact(state: dict) -> dict[str, Any]:
         "false_continue_margin": false_continue_margin,
         "hidden_fault": hidden_fault,
         "impossible_energy": impossible_energy,
+        "telemetry_learning_signal": learning_signal,
     }
 
 

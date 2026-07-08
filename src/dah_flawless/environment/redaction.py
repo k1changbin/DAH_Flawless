@@ -5,12 +5,16 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from dah_flawless.observation import attach_red_visibility_policy
+
 
 def redact_state(state: dict) -> dict:
+    blue_observed = deepcopy(state["blue_observed"])
+    attach_red_visibility_policy(blue_observed)
     redacted = {
         "round": state["round"],
         "seed": state["seed"],
-        "blue_observed": deepcopy(state["blue_observed"]),
+        "blue_observed": blue_observed,
         "mission": deepcopy(state["mission"]),
         "capabilities": deepcopy(state["capabilities"]),
         "defense_runtime": deepcopy(state["defense_runtime"]),

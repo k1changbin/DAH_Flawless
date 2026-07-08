@@ -16,6 +16,7 @@ from dah_flawless.config import (
 from dah_flawless.blue.defense_effects import assess_defense_containment
 from dah_flawless.scoring.goal_scorer import score_red_goal
 from dah_flawless.scoring.mission_impact import assess_mission_impact, blend_goal_reward_with_mission_impact
+from dah_flawless.scoring.telemetry_learning import telemetry_goal_success, telemetry_learning_signal
 from dah_flawless.schemas import Attack, DefenseAction, Score, Threat
 
 
@@ -129,7 +130,13 @@ def _attack_evidence(state: dict, attack: Attack) -> dict:
             "battery_percent": observed["telemetry"]["battery_percent"],
             "motor_status": observed["telemetry"]["motor_status"],
         }
-        mismatch = trusted != received
+        learning_signal = telemetry_learning_signal(state, include_world_truth=True)
+        indirect = learning_signal["indirect_evidence"]
+        direct_mismatch = trusted != received
+        mismatch = direct_mismatch or telemetry_goal_success(learning_signal)
+        trusted["telemetry_memory_policy"] = "read_only_intel"
+        received["indirect_confusion"] = indirect
+        received["telemetry_learning_signal"] = learning_signal
     elif attack.target_domain == "mission":
         trusted = scorer_truth["mission"]["area_priority"]
         received = observed["mission"]["area_priority"]
@@ -168,10 +175,12 @@ def _recovery_success(state: dict, attack: Attack) -> bool:
     observed = state["blue_observed"]
 
     if attack.target_domain == "telemetry":
-        return (
+        direct_recovered = (
             observed["telemetry"]["battery_percent"] == scorer_truth["uav"]["battery_percent"]
             and observed["telemetry"]["motor_status"] == scorer_truth["uav"]["motor_status"]
         )
+        learning_signal = telemetry_learning_signal(state, include_world_truth=True)
+        return direct_recovered and not telemetry_goal_success(learning_signal)
     if attack.target_domain == "mission":
         truth_priority = scorer_truth["mission"]["area_priority"]
         truth_top_area = max(truth_priority, key=lambda area: float(truth_priority[area]))

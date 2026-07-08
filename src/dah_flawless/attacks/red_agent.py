@@ -21,6 +21,7 @@ from dah_flawless.attacks.goal_planner import (
     update_goal_stats,
 )
 from dah_flawless.attacks.selector import build_tactic, score_attack_candidates
+from dah_flawless.attacks.telemetry_memory import TelemetryMemory
 from dah_flawless.config import (
     DEFAULT_MUTATION_PROFILE,
     DEFAULT_STEALTH_MODE,
@@ -56,6 +57,7 @@ class RedAgent:
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
         self._tactic_exploration_rate = DEFAULT_TACTIC_EXPLORATION_RATE
+        self._telemetry_memory = TelemetryMemory()
         self._policy_update_reviewer = policy_update_reviewer or build_policy_update_reviewer()
         self.load_policy_state(policy_state)
 
@@ -67,6 +69,7 @@ class RedAgent:
         tag_details: list[SituationTag] | None = None,
         previous_logs: list[dict] | None = None,
     ) -> tuple[Attack, bool, dict, dict]:
+        telemetry_memory = self._telemetry_memory.observe(observed_state, round_number=round_number)
         goal_candidates = score_goal_candidates(
             tag_details=tag_details,
             observed_state=observed_state,
@@ -96,6 +99,7 @@ class RedAgent:
                     "stealth": stealth,
                     "goal": goal_plan,
                     "tactic": tactic,
+                    "telemetry_memory": telemetry_memory,
                     "goal_candidate_scores": goal_candidates,
                     "attack_candidate_scores": score_attack_candidates(
                         realistic_attacks(),
@@ -150,6 +154,7 @@ class RedAgent:
                 "stealth": stealth,
                 "goal": goal_plan,
                 "tactic": tactic,
+                "telemetry_memory": telemetry_memory,
                 "goal_candidate_scores": goal_candidates,
                 "attack_candidate_scores": attack_candidates,
             },
@@ -198,6 +203,7 @@ class RedAgent:
         before_probe_delta = self._telemetry_probe_delta
         goal_update = None
         feedback_signal = _attack_weight_feedback_signal(detected=detected, score=score)
+        telemetry_learning_feedback = _telemetry_learning_feedback(score)
         proposed_weight_before_normalization = _proposed_attack_weight(
             before,
             detected=detected,
@@ -242,6 +248,7 @@ class RedAgent:
                 "weight_update_policy": "relative_feedback_normalized_mean_v1",
                 "baseline_weight": baseline,
                 "feedback_signal": feedback_signal,
+                "telemetry_learning_feedback": telemetry_learning_feedback,
                 "proposed_weight_before_normalization": proposed_weight_before_normalization,
                 "proposed_weight_normalization": proposed_normalization,
             },
@@ -284,6 +291,7 @@ class RedAgent:
                     "algorithm": "relative_feedback_normalized_mean_v1",
                     "baseline_weight": round(float(baseline), 4),
                     "feedback_signal": feedback_signal,
+                    "telemetry_learning_feedback": telemetry_learning_feedback,
                     "learning_rate": RED_WEIGHT_RELATIVE_LEARNING_RATE,
                     "mean_reversion_rate": RED_WEIGHT_MEAN_REVERSION_RATE,
                     "relative_floor": RED_WEIGHT_RELATIVE_FLOOR,
@@ -311,6 +319,8 @@ class RedAgent:
             self._tactic_exploration_rate = float(policy_state["tactic_exploration_rate"])
         if "goal_stats" in policy_state:
             self._goal_stats = normalize_goal_stats(policy_state["goal_stats"])
+        if "telemetry_memory" in policy_state:
+            self._telemetry_memory = TelemetryMemory.from_state(policy_state["telemetry_memory"])
 
     def export_policy_state(self) -> dict:
         return {
@@ -322,6 +332,9 @@ class RedAgent:
             "stealth_mode": self._stealth_mode,
             "mutation_profile": self._mutation_profile,
         }
+
+    def export_telemetry_memory_state(self) -> dict:
+        return self._telemetry_memory.export_state()
 
 
 def _tag_context(tags: list[str], tag_details: list[SituationTag] | None) -> dict:
@@ -379,7 +392,33 @@ def _attack_weight_feedback_signal(*, detected: bool, score) -> float:
     elif winner_detail in {"NO_EFFECT", "FALSE_POSITIVE"}:
         signal -= 0.12
 
+    signal += _telemetry_learning_feedback(score).get("red_weight_bonus", 0.0)
     return round(min(1.0, max(-1.0, signal)), 4)
+
+
+def _telemetry_learning_feedback(score) -> dict:
+    if score is None or getattr(score, "target_domain", None) != "telemetry":
+        return {"applied": False, "reason": "non_telemetry_or_no_score", "red_weight_bonus": 0.0}
+    evidence = getattr(score, "evidence", {}) or {}
+    goal_score = evidence.get("goal_score", {})
+    goal_evidence = goal_score.get("evidence", {}) if isinstance(goal_score, dict) else {}
+    signal = goal_evidence.get("telemetry_learning_signal")
+    if not isinstance(signal, dict):
+        return {"applied": False, "reason": "missing_telemetry_learning_signal", "red_weight_bonus": 0.0}
+
+    active_axes = signal.get("active_axes", []) or []
+    axis_entropy = float(signal.get("axis_entropy", 0.0) or 0.0)
+    weighted_effect_score = float(signal.get("weighted_effect_score", 0.0) or 0.0)
+    diversity_bonus = float(signal.get("red_policy_diversity_bonus", 0.0) or 0.0)
+    red_weight_bonus = min(0.14, diversity_bonus + min(0.04, weighted_effect_score * 0.04))
+    return {
+        "applied": red_weight_bonus > 0.0,
+        "dominant_axis": signal.get("dominant_axis"),
+        "active_axes": list(active_axes),
+        "axis_entropy": round(axis_entropy, 4),
+        "weighted_effect_score": round(weighted_effect_score, 4),
+        "red_weight_bonus": round(red_weight_bonus, 4),
+    }
 
 
 def _normalize_relative_attack_weights(

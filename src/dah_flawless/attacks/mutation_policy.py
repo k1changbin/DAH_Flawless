@@ -181,7 +181,12 @@ class MutationPolicyEnforcer:
 
     def _policy_for(self, path: str) -> RuntimeFieldPolicy | None:
         normalized = _normalize_path(path)
-        if normalized.startswith("internal_observe.") or normalized.startswith("state.world.") or normalized.startswith("raw_world."):
+        if (
+            normalized.startswith("internal_observe.")
+            or normalized.startswith("state.world.")
+            or normalized.startswith("raw_world.")
+            or normalized.startswith("telemetry_channels.")
+        ):
             return None
         return FIELD_POLICY_BY_PATH.get(normalized)
 

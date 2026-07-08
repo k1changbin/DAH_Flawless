@@ -792,14 +792,54 @@ def _apply_incremental_mutation(
 ) -> tuple[Any, Any, list[str]]:
     obs = state["blue_observed"]
     if attack_name == "TELEMETRY_FDI":
-        delta = round(1.2 * scale, 3)
-        before = float(obs["telemetry"]["battery_percent"])
-        obs["telemetry"]["battery_percent"] = round(min(100.0, before + delta), 3)
-        if strategy in {"motor_status_masking", "internal_external_gap_shaping"} and scale >= 0.55:
-            obs["telemetry"]["motor_status"] = "OK"
+        before = _telemetry_indirect_combat_snapshot(obs)
+        ack_sequence_gap = max(1, int(round(scale)))
+        ack_delay_delta = int(round(140 * scale))
+        latency_delta = int(round(45 * scale))
+        jitter_delta = int(round(45 * scale))
+        command_decoy = False
         if strategy == "confidence_spoofing":
-            obs["telemetry"]["battery_drain_rate"] = round(max(0.2, float(obs["telemetry"].get("battery_drain_rate", 1.0)) - 0.08 * scale), 3)
-        return delta, round(obs["telemetry"]["battery_percent"] - before, 3), ["telemetry.battery_percent"]
+            ack_sequence_gap = 1
+            ack_delay_delta = int(round(95 * scale))
+            latency_delta = int(round(120 * scale))
+            jitter_delta = int(round(100 * scale))
+        elif strategy in {"telemetry_memory_command_decoy", "internal_external_gap_shaping"}:
+            ack_sequence_gap = max(1, int(round(2 * scale)))
+            ack_delay_delta = int(round(180 * scale))
+            latency_delta = int(round(70 * scale))
+            jitter_delta = int(round(60 * scale))
+            command_decoy = scale >= 0.45
+        ack = obs["c2_message"].setdefault("ack", {})
+        ack["visible"] = True
+        ack["sequence_number"] = max(0, int(obs["c2_message"]["sequence_number"]) - ack_sequence_gap)
+        ack["status"] = "ACCEPTED"
+        obs["comms"]["ack_visible"] = True
+        obs["comms"]["ack_delay_ms"] = int(obs["comms"].get("ack_delay_ms", 0)) + ack_delay_delta
+        obs["comms"]["latency_ms"] = int(obs["comms"].get("latency_ms", 0)) + latency_delta
+        obs["comms"]["packet_interval_jitter_ms"] = int(obs["comms"].get("packet_interval_jitter_ms", 0)) + jitter_delta
+        if command_decoy:
+            obs["c2_message"]["command"] = _telemetry_memory_command_decoy(obs)
+        after = _telemetry_indirect_combat_snapshot(obs)
+        changed_paths = [
+            "c2_message.ack.sequence_number",
+            "c2_message.ack.status",
+            "comms.ack_delay_ms",
+            "comms.latency_ms",
+            "comms.packet_interval_jitter_ms",
+        ]
+        if command_decoy:
+            changed_paths.append("c2_message.command")
+        return (
+            {
+                "ack_sequence_gap": ack_sequence_gap,
+                "ack_delay_delta_ms": ack_delay_delta,
+                "latency_delta_ms": latency_delta,
+                "packet_interval_jitter_delta_ms": jitter_delta,
+                "command_decoy": command_decoy,
+            },
+            _generic_delta(before, after),
+            changed_paths,
+        )
 
     if attack_name == "PRIORITY_POISONING":
         step_delta = round(0.042 * scale, 4)
@@ -1053,7 +1093,7 @@ def _recover_red_budget(memory: CombatStepMemory, amount: float) -> None:
 def _next_strategy(attack_name: str, current: str | None) -> str:
     strategies = {
         "TIME_DESYNC_REPLAY": ("timestamp_creep", "sequence_lag", "ack_confusion", "selective_delay"),
-        "TELEMETRY_FDI": ("battery_slow_drift", "confidence_spoofing", "internal_external_gap_shaping"),
+        "TELEMETRY_FDI": ("telemetry_memory_command_decoy", "confidence_spoofing", "internal_external_gap_shaping"),
         "PRIORITY_POISONING": ("area_priority_drift", "recommended_area_nudge", "mission_confidence_shaping"),
     }.get(attack_name, ("generic_drift",))
     if current not in strategies:
@@ -1064,10 +1104,7 @@ def _next_strategy(attack_name: str, current: str | None) -> str:
 def _attack_snapshot(state: dict, attack_name: str) -> Any:
     obs = state["blue_observed"]
     if attack_name == "TELEMETRY_FDI":
-        return {
-            "battery_percent": obs["telemetry"]["battery_percent"],
-            "motor_status": obs["telemetry"]["motor_status"],
-        }
+        return _telemetry_indirect_combat_snapshot(obs)
     if attack_name == "PRIORITY_POISONING":
         return deepcopy(obs["mission"]["area_priority"])
     if attack_name == "TIME_DESYNC_REPLAY":
@@ -1079,6 +1116,48 @@ def _attack_snapshot(state: dict, attack_name: str) -> Any:
             "packet_loss": obs["comms"].get("packet_loss"),
         }
     return None
+
+
+def _telemetry_indirect_combat_snapshot(obs: dict) -> dict:
+    c2_message = obs["c2_message"]
+    ack = c2_message.get("ack", {})
+    comms = obs["comms"]
+    channels = obs.get("telemetry_channels") or obs.get("external_observe", {}).get("telemetry_channels", {})
+    asset_tx = channels.get("asset_tx_mirror", {})
+    ground_rx = channels.get("ground_rx_view", {})
+    return {
+        "telemetry": {
+            "battery_percent": obs["telemetry"]["battery_percent"],
+            "motor_status": obs["telemetry"]["motor_status"],
+        },
+        "telemetry_memory_anchor": {
+            "asset_tx_battery_percent": asset_tx.get("battery_percent"),
+            "ground_rx_battery_percent": ground_rx.get("battery_percent"),
+            "asset_tx_motor_status": asset_tx.get("motor_status"),
+            "ground_rx_motor_status": ground_rx.get("motor_status"),
+            "read_only_confirmed": not bool(asset_tx.get("red_direct_mutation_allowed", False))
+            and not bool(ground_rx.get("red_direct_mutation_allowed", False)),
+        },
+        "command_channel": {
+            "command": c2_message.get("command"),
+            "sequence_number": c2_message.get("sequence_number"),
+            "ack_sequence_number": ack.get("sequence_number"),
+            "ack_status": ack.get("status"),
+            "latency_ms": comms.get("latency_ms"),
+            "ack_delay_ms": comms.get("ack_delay_ms"),
+            "packet_interval_jitter_ms": comms.get("packet_interval_jitter_ms"),
+        },
+    }
+
+
+def _telemetry_memory_command_decoy(obs: dict) -> str:
+    channels = obs.get("telemetry_channels") or obs.get("external_observe", {}).get("telemetry_channels", {})
+    asset_tx = channels.get("asset_tx_mirror", {})
+    battery = asset_tx.get("battery_percent")
+    motor = asset_tx.get("motor_status")
+    if (isinstance(battery, (int, float)) and float(battery) <= 25.0) or motor != "OK":
+        return "CONTINUE_MISSION"
+    return "HOLD_POSITION"
 
 
 def _priority_delta(before: dict, after: dict) -> dict:
