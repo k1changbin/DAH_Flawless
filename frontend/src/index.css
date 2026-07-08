@@ -1,0 +1,245 @@
+@import "tailwindcss";
+@import "pretendard/dist/web/variable/pretendardvariable.css";
+@import "@fontsource/chakra-petch/600.css";
+@import "@fontsource/chakra-petch/700.css";
+@import "@fontsource-variable/jetbrains-mono";
+
+@theme {
+  /* 표면 */
+  --color-surface-0: #0a0f1c;
+  --color-surface-1: #0f1626;
+  --color-surface-2: #16203a;
+  --color-hud: #2a3a5c;
+  --color-hud-active: #5fd4f5;
+
+  /* 진영 */
+  --color-red-ops: #ff5d45;
+  --color-red-dim: #7a3328;
+  --color-blue-def: #4fa3ff;
+  --color-blue-dim: #27476b;
+
+  /* 텍스트 */
+  --color-text-hi: #e8eef7;
+  --color-text-mid: #9fb0c9;
+  --color-text-low: #5a6b85;
+
+  /* 판정 */
+  --color-ok: #58d6a3;
+  --color-warn: #f5c542;
+
+  /* 폰트 */
+  --font-sans: "Pretendard Variable", Pretendard, sans-serif;
+  --font-display: "Chakra Petch", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", monospace;
+}
+
+:root {
+  /* 무결이 전용 3색. 대시보드 다른 곳에서 사용 금지 */
+  --mugyeol-a: #c77dff;
+  --mugyeol-b: #6ee7f0;
+  --mugyeol-c: #ff8fd8;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--color-surface-0);
+  color: var(--color-text-hi);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100dvh;
+}
+
+/* 원근 그리드 배경 (이미지 #9의 지도 그리드 느낌, 소실점 하단 중앙) */
+.bg-battle-grid {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  perspective: 600px;
+}
+.bg-battle-grid::before {
+  content: "";
+  position: absolute;
+  left: -50%;
+  top: 30%;
+  width: 200%;
+  height: 160%;
+  transform: rotateX(62deg);
+  transform-origin: 50% 0%;
+  background-image:
+    linear-gradient(to right, rgba(95, 212, 245, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(95, 212, 245, 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, black 30%, transparent 75%);
+}
+.bg-battle-grid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 90% 70% at 50% 45%, transparent 40%, rgba(10, 15, 28, 0.85) 100%);
+}
+
+/* HUD 코너컷 프레임: 상단우측/하단좌측 12px 절단 */
+.hud-clip {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% 100%,
+    12px 100%,
+    0 calc(100% - 12px)
+  );
+}
+
+/* 스크롤바 (콕핏 스타일) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-hud);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-hud-active);
+}
+
+/* 타임라인 스크러버 (input range) */
+input[type="range"].scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--color-hud);
+  outline: none;
+}
+input[type="range"].scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--color-hud-active);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  cursor: pointer;
+}
+input[type="range"].scrubber:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(95, 212, 245, 0.4);
+}
+
+/* 포커스 링 (접근성) */
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 1px solid var(--color-hud-active);
+  outline-offset: 2px;
+}
+
+/* ---------- 무결이 (오로라 액체 블롭) ---------- */
+
+@keyframes mugyeol-morph {
+  0%,
+  100% {
+    border-radius: 42% 58% 55% 45% / 48% 44% 56% 52%;
+  }
+  25% {
+    border-radius: 58% 42% 46% 54% / 42% 58% 44% 56%;
+  }
+  50% {
+    border-radius: 46% 54% 60% 40% / 56% 46% 54% 44%;
+  }
+  75% {
+    border-radius: 54% 46% 42% 58% / 44% 54% 46% 56%;
+  }
+}
+
+@keyframes mugyeol-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes mugyeol-breath {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+@keyframes mugyeol-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+.mugyeol-blob {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: #171030;
+  animation: mugyeol-morph 8s ease-in-out infinite;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -4px 10px rgba(0, 0, 0, 0.4);
+}
+.mugyeol-blob::before {
+  content: "";
+  position: absolute;
+  inset: -45%;
+  z-index: -1;
+  background: conic-gradient(
+    var(--mugyeol-a),
+    var(--mugyeol-b),
+    var(--mugyeol-c),
+    var(--mugyeol-a)
+  );
+  filter: blur(12px) saturate(1.4);
+  animation: mugyeol-spin 9s linear infinite;
+}
+.mugyeol-blob.listening {
+  animation-duration: 1.2s;
+}
+.mugyeol-blob.listening::before {
+  animation-duration: 2.2s;
+}
+.mugyeol-blob.thinking::before {
+  animation-duration: 1.1s;
+}
+
+.mugyeol-breathing {
+  animation: mugyeol-breath 3.2s ease-in-out infinite;
+}
+.mugyeol-shaking {
+  animation: mugyeol-shake 0.3s ease-in-out 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

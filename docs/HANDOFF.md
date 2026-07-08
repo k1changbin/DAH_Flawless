@@ -1,6 +1,36 @@
 # DAH Flawless Handoff
 
-최종 갱신: 2026-07-07
+최종 갱신: 2026-07-08 (프론트엔드 리디자인 P0~P5 구현 완료)
+
+## 프론트엔드 리디자인 (2026-07-08, front-end 브랜치)
+
+**스펙 문서: `docs/FRONTEND_DESIGN_SPEC.md` — 후속 작업 전 반드시 정독. 모든 디자인/기술 결정의 단일 기준.**
+
+### 완료 상태 (P0~P5 전부 구현·검증됨)
+
+- 위치: `frontend/` (React 19 + Vite 8 + TS + Tailwind v4 + R3F + motion + zustand)
+- 빌드: `cd frontend && npm run build` → `dist/index.html` 단일 파일 4.5MB (vite-plugin-singlefile, 폰트·3D·데이터 전부 인라인, file:// 구동 확인)
+- 데이터: `data/frontend/combat_replay.json` (seed 42, 6라운드, combat_steps 포함). 재생성:
+  `PYTHONPATH=src python -c "from pathlib import Path; from dah_flawless.environment.round_combat_runner import run_combat_rounds; run_combat_rounds(seed=42, rounds=6, max_steps=30, min_steps=6, log_path=Path('data/frontend/replay_rounds.jsonl'), summary_path=Path('data/frontend/replay_summary.json'), frontend_log_path=Path('data/frontend/combat_replay.json'))"`
+  주의: 스텝 타임라인은 `run_combat_rounds` 직접 호출로만 생성됨 (`scripts/generate_frontend_log.py`는 combat_steps 없는 JSONL이면 timeline이 빈다).
+- 검증: `cd frontend && node scripts/verify.mjs 출력.png [--step N] [--focus RED|BLUE] [--mugyeol] [--play]` — Playwright 스크린샷+콘솔 에러 수집. 매 수정 후 실행할 것.
+- 구현물: 커맨드 바(라운드/재생/승패), RED-BLUE 듀얼 패널 스프링 스위칭(레일 축소·확장 상세·키보드 접근), R3F 3D 전장 씬(SATCOM/UAV/UGV/C2 노드, 공격 대시 흐름 라인, 탐지 링 펄스, 포커스 카메라 도브, WebGL 폴백), 위성 창 4종(창-밖-창: suspicion 스파크라인·ZTA 정책 레인·텔레메트리·이벤트 로그), 무결이(오로라 블롭, Web Speech ko-KR 명령 매핑, TTS, 볼륨 반응 꿈틀, 텍스트 폴백), 부팅 스태거 시퀀스, prefers-reduced-motion 전역.
+- 키보드: Space 재생, ←/→ 스텝, Esc 포커스 해제.
+
+### 남은 폴리시 (다음 세션 후보, 스펙 대비 미완)
+
+1. 위성 창 드래그 이동·더블클릭 접기 (스펙 4.1 선택 항목)
+2. 1440px 미만 도킹 컬럼·1024px 미만 탭 시트 수렴 (현재 오프셋 축소만)
+3. 프레임 SVG 스트로크 draw-in 부팅 연출 (현재 opacity+y 스태거로 대체)
+4. Bloom 포스트프로세싱 (성능·용량 이유로 의도적 미탑재, 스펙 5장 탈출경로 적용)
+5. 음성 인식 실기기 Chrome 테스트 (헤드리스는 마이크 불가라 텍스트 명령으로만 검증됨)
+6. DENY 판정 마커 pop 애니메이션 (현재 ZTA 레인 셀 색상으로 표현)
+
+### 불변식 (프론트에서도 유지 중, 위반 금지)
+
+- Blue 패널·위성 창은 blue_observed 계열 데이터만 표시 (truth 노출 없음)
+- 백엔드 파이썬·JSON 스키마 수정 금지, `streamlit_app.py`·`scripts/build_static_site.py` 삭제·수정 금지
+- 색 규율: 시안=포커스, red/blue=진영 전용, 무결이 3색(`--mugyeol-*`)은 무결이 밖 사용 금지
 
 ## 현재 방향
 
