@@ -30,6 +30,11 @@ from dah_flawless.config import (
 from dah_flawless.policy_review import PolicyUpdateReviewer, build_policy_update_reviewer
 from dah_flawless.schemas import Attack, SituationTag, decision
 
+RED_WEIGHT_RELATIVE_LEARNING_RATE = 0.08
+RED_WEIGHT_MEAN_REVERSION_RATE = 0.04
+RED_WEIGHT_RELATIVE_FLOOR = 0.55
+RED_WEIGHT_RELATIVE_CEILING = 1.45
+
 
 class RedAgent:
     def __init__(
@@ -45,7 +50,8 @@ class RedAgent:
         self._scripted_attacks = scripted_attacks
         self._stealth_mode = stealth_mode
         self._mutation_profile = mutation_profile
-        self._weights = {attack.name: attack.weight for attack in realistic_attacks()}
+        self._base_weights = {attack.name: attack.weight for attack in realistic_attacks()}
+        self._weights = dict(self._base_weights)
         self._goal_stats = default_goal_stats()
         self._stealth_for: set[str] = set()  # attacks switched to stealth (adaptive)
         self._telemetry_probe_delta = 24
@@ -187,9 +193,24 @@ class RedAgent:
         round_number: int = 0,
     ) -> dict:
         before = self._weights.get(attack_name, 0.0)
+        before_weights = dict(self._weights)
+        baseline = self._base_weights.get(attack_name, before or 1.0)
         before_probe_delta = self._telemetry_probe_delta
         goal_update = None
-        proposed_weight = _proposed_attack_weight(before, detected=detected, score=score)
+        feedback_signal = _attack_weight_feedback_signal(detected=detected, score=score)
+        proposed_weight_before_normalization = _proposed_attack_weight(
+            before,
+            detected=detected,
+            score=score,
+            baseline_weight=baseline,
+        )
+        proposed_weights = dict(self._weights)
+        proposed_weights[attack_name] = proposed_weight_before_normalization
+        proposed_weights, proposed_normalization = _normalize_relative_attack_weights(
+            proposed_weights,
+            self._base_weights,
+        )
+        proposed_weight = proposed_weights.get(attack_name, proposed_weight_before_normalization)
         proposed_probe_delta = before_probe_delta
         if attack_name == "TELEMETRY_FDI":
             if detected:
@@ -200,8 +221,16 @@ class RedAgent:
         reviewed, review_log = self._policy_update_reviewer.review_update(
             agent="RedAgent",
             update_name="attack_weight",
-            before={"weight": before, "telemetry_probe_delta": before_probe_delta},
-            proposed={"weight": proposed_weight, "telemetry_probe_delta": proposed_probe_delta},
+            before={
+                "weight": before,
+                "weights": before_weights,
+                "telemetry_probe_delta": before_probe_delta,
+            },
+            proposed={
+                "weight": proposed_weight,
+                "weights": proposed_weights,
+                "telemetry_probe_delta": proposed_probe_delta,
+            },
             context={
                 "attack_name": attack_name,
                 "detected": detected,
@@ -210,11 +239,28 @@ class RedAgent:
                 "winner_detail": getattr(score, "winner_detail", None) if score is not None else None,
                 "agent_family": "red_probe",
                 "stealth_mode": self._stealth_mode,
+                "weight_update_policy": "relative_feedback_normalized_mean_v1",
+                "baseline_weight": baseline,
+                "feedback_signal": feedback_signal,
+                "proposed_weight_before_normalization": proposed_weight_before_normalization,
+                "proposed_weight_normalization": proposed_normalization,
             },
         )
 
-        after = float(reviewed["weight"])
-        self._weights[attack_name] = after
+        reviewed_weights = reviewed.get("weights") if isinstance(reviewed.get("weights"), dict) else None
+        if reviewed_weights:
+            normalized_weights, applied_normalization = _normalize_relative_attack_weights(
+                {name: float(value) for name, value in reviewed_weights.items()},
+                self._base_weights,
+            )
+            self._weights = normalized_weights
+        else:
+            self._weights[attack_name] = float(reviewed["weight"])
+            self._weights, applied_normalization = _normalize_relative_attack_weights(
+                self._weights,
+                self._base_weights,
+            )
+        after = float(self._weights.get(attack_name, reviewed["weight"]))
         self._telemetry_probe_delta = int(reviewed["telemetry_probe_delta"])
         # Adaptive stealth: once an attack is detected, retry it quietly.
         if self._stealth_mode == "adaptive" and detected:
@@ -225,10 +271,27 @@ class RedAgent:
             "RedAgent",
             "weight_update",
             "attack_detected" if detected else "attack_not_detected",
-            before={"weight": before, "telemetry_probe_delta": before_probe_delta},
+            before={
+                "weight": before,
+                "weights": before_weights,
+                "telemetry_probe_delta": before_probe_delta,
+            },
             after={
                 "weight": after,
+                "weights": dict(sorted(self._weights.items())),
                 "telemetry_probe_delta": self._telemetry_probe_delta,
+                "relative_weight_update": {
+                    "algorithm": "relative_feedback_normalized_mean_v1",
+                    "baseline_weight": round(float(baseline), 4),
+                    "feedback_signal": feedback_signal,
+                    "learning_rate": RED_WEIGHT_RELATIVE_LEARNING_RATE,
+                    "mean_reversion_rate": RED_WEIGHT_MEAN_REVERSION_RATE,
+                    "relative_floor": RED_WEIGHT_RELATIVE_FLOOR,
+                    "relative_ceiling": RED_WEIGHT_RELATIVE_CEILING,
+                    "proposed_weight_before_normalization": proposed_weight_before_normalization,
+                    "proposed_weight_after_normalization": proposed_weight,
+                    "applied_weight_normalization": applied_normalization,
+                },
                 "policy_update_review": review_log,
                 "goal_feedback": goal_update,
             },
@@ -272,9 +335,24 @@ def deepcopy_sorted_goal_stats(goal_stats: dict) -> dict:
     return {goal_id: dict(goal_stats[goal_id]) for goal_id in sorted(goal_stats)}
 
 
-def _proposed_attack_weight(before: float, *, detected: bool, score) -> float:
+def _proposed_attack_weight(
+    before: float,
+    *,
+    detected: bool,
+    score,
+    baseline_weight: float | None = None,
+) -> float:
+    baseline = float(baseline_weight if baseline_weight is not None else before or 1.0)
+    signal = _attack_weight_feedback_signal(detected=detected, score=score)
+    relative_delta = float(before) * RED_WEIGHT_RELATIVE_LEARNING_RATE * signal
+    anchor_delta = (baseline - float(before)) * RED_WEIGHT_MEAN_REVERSION_RATE
+    lower, upper = _relative_weight_bounds(baseline)
+    return round(min(upper, max(lower, float(before) + relative_delta + anchor_delta)), 4)
+
+
+def _attack_weight_feedback_signal(*, detected: bool, score) -> float:
     if score is None:
-        return max(1.0, before - 0.5) if detected else before + 0.5
+        return -0.50 if detected else 0.36
 
     goal_reward = float(getattr(score, "goal_reward", 0.0))
     goal_success = bool(getattr(score, "goal_success", False))
@@ -283,25 +361,80 @@ def _proposed_attack_weight(before: float, *, detected: bool, score) -> float:
     attrition = getattr(score, "evidence", {}).get("attrition", {}) if score is not None else {}
     attrition_cost_effective = bool(attrition.get("cost_effective", True))
 
-    delta = -0.20 if detected else 0.12
-    delta += 0.55 * (goal_reward - 0.45)
-    delta += 0.22 if goal_success else -0.22
+    signal = -0.20 if detected else 0.12
+    signal += 0.55 * (goal_reward - 0.45)
+    signal += 0.22 if goal_success else -0.22
 
     if winner == "RED_BREACH":
-        delta += 0.18
+        signal += 0.18
     elif winner == "RED_ATTRITION":
-        delta += 0.16 if attrition_cost_effective else -0.14
+        signal += 0.16 if attrition_cost_effective else -0.14
     elif winner == "BLUE_RECOVERY":
-        delta -= 0.24
+        signal -= 0.24
     elif winner == "BLUE":
-        delta -= 0.12
+        signal -= 0.12
 
     if winner_detail == "PARTIAL_BREACH":
-        delta -= 0.18
+        signal -= 0.18
     elif winner_detail in {"NO_EFFECT", "FALSE_POSITIVE"}:
-        delta -= 0.12
+        signal -= 0.12
 
-    return max(1.0, round(before + delta, 4))
+    return round(min(1.0, max(-1.0, signal)), 4)
+
+
+def _normalize_relative_attack_weights(
+    weights: dict[str, float],
+    base_weights: dict[str, float],
+) -> tuple[dict[str, float], dict]:
+    target_total = sum(float(value) for value in base_weights.values())
+    normalized = {
+        attack_name: _clamp_relative_weight(
+            float(weights.get(attack_name, baseline)),
+            float(baseline),
+        )
+        for attack_name, baseline in base_weights.items()
+    }
+    clipped_before_scaling = [
+        attack_name
+        for attack_name, baseline in base_weights.items()
+        if round(float(weights.get(attack_name, baseline)), 4) != normalized[attack_name]
+    ]
+
+    for _ in range(8):
+        current_total = sum(normalized.values())
+        if current_total <= 0:
+            break
+        scale = target_total / current_total
+        if abs(scale - 1.0) < 0.0001:
+            break
+        next_weights = {
+            attack_name: _clamp_relative_weight(value * scale, float(base_weights[attack_name]))
+            for attack_name, value in normalized.items()
+        }
+        if all(abs(next_weights[name] - normalized[name]) < 0.0001 for name in normalized):
+            normalized = next_weights
+            break
+        normalized = next_weights
+
+    normalized = {attack_name: round(value, 4) for attack_name, value in sorted(normalized.items())}
+    return normalized, {
+        "algorithm": "preserve_relative_attack_weight_mean_v1",
+        "target_total": round(target_total, 4),
+        "actual_total": round(sum(normalized.values()), 4),
+        "relative_floor": RED_WEIGHT_RELATIVE_FLOOR,
+        "relative_ceiling": RED_WEIGHT_RELATIVE_CEILING,
+        "clipped_before_scaling": sorted(clipped_before_scaling),
+    }
+
+
+def _relative_weight_bounds(baseline_weight: float) -> tuple[float, float]:
+    baseline = max(0.0001, float(baseline_weight))
+    return baseline * RED_WEIGHT_RELATIVE_FLOOR, baseline * RED_WEIGHT_RELATIVE_CEILING
+
+
+def _clamp_relative_weight(value: float, baseline_weight: float) -> float:
+    lower, upper = _relative_weight_bounds(baseline_weight)
+    return round(min(upper, max(lower, float(value))), 4)
 
 
 def _recent_tactics(previous_logs: list[dict], attack_name: str, window: int = 5) -> list[str]:

@@ -141,6 +141,30 @@ class GoalPlannerTests(unittest.TestCase):
         self.assertEqual(state["goal_stats"]["WRONG_TARGET_SELECTION"]["count"], 1)
         self.assertEqual(log["after"]["goal_feedback"]["goal_id"], "WRONG_TARGET_SELECTION")
 
+    def test_red_attack_weight_penalty_stays_relative_to_policy_mean(self):
+        agent = RedAgent(seed=1)
+
+        for _ in range(80):
+            agent.update_weight("PRIORITY_POISONING", detected=True)
+
+        weights = agent.export_policy_state()["weights"]
+        self.assertGreater(weights["PRIORITY_POISONING"], 1.0)
+        self.assertAlmostEqual(sum(weights.values()) / len(weights), 5.0, places=2)
+        self.assertGreater(weights["TELEMETRY_FDI"], 5.0)
+        self.assertGreater(weights["TIME_DESYNC_REPLAY"], 5.0)
+
+    def test_red_weight_update_log_explains_relative_normalization(self):
+        agent = RedAgent(seed=1)
+
+        log = agent.update_weight("PRIORITY_POISONING", detected=True)
+
+        self.assertEqual(
+            log["after"]["relative_weight_update"]["algorithm"],
+            "relative_feedback_normalized_mean_v1",
+        )
+        self.assertIn("weights", log["after"])
+        self.assertIn("applied_weight_normalization", log["after"]["relative_weight_update"])
+
     def test_simulation_logs_goal_plan_and_candidates(self):
         logs, summary = run_simulation(seed=42, rounds=4)
 
