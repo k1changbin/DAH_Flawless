@@ -10,6 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from dah_flawless.blue.observe_policy_gate import (
+    compact_policy_gate,
+    domain_policy_decision,
+    domain_use_weight,
+)
 from dah_flawless.config import AVAIL_FLOOR
 from dah_flawless.schemas import Attack, DefenseAction
 
@@ -30,6 +35,8 @@ def assess_mission_impact(
         "command_freshness": _command_freshness_impact(pre_defense_state),
         "availability_pressure": _availability_pressure_impact(pre_defense_state, post_defense_state, actions),
     }
+    policy_gate = _observe_policy_gate(post_defense_state) or _observe_policy_gate(pre_defense_state)
+    components = _apply_policy_gate_to_components(components, policy_gate)
     primary_component = max(components, key=lambda name: components[name]["score"])
     target_component = _target_component(attack.target_domain, (red_goal or {}).get("goal_id"))
     target_score = components.get(target_component, components[primary_component])["score"]
@@ -41,7 +48,8 @@ def assess_mission_impact(
         "primary_component": primary_component,
         "target_component": target_component,
         "components": components,
-        "algorithm": "mission_impact_rule_score_v1",
+        "observe_policy_gate": compact_policy_gate(policy_gate),
+        "algorithm": "mission_impact_rule_score_v2_policy_gated",
     }
 
 
@@ -179,6 +187,46 @@ def _target_component(target_domain: str, goal_id: str | None) -> str:
     if target_domain == "command":
         return "command_freshness"
     return "availability_pressure"
+
+
+def _observe_policy_gate(state: dict) -> dict | None:
+    return state.get("defense_runtime", {}).get("observe_policy_gate")
+
+
+def _apply_policy_gate_to_components(
+    components: dict[str, dict[str, Any]],
+    policy_gate: dict | None,
+) -> dict[str, dict[str, Any]]:
+    if not policy_gate:
+        return components
+
+    component_domains = {
+        "mission_belief": "mission",
+        "telemetry_safety": "telemetry",
+        "command_freshness": "command",
+    }
+    updated = {name: dict(value) for name, value in components.items()}
+    for component, domain in component_domains.items():
+        if component not in updated:
+            continue
+        use_weight = domain_use_weight(policy_gate, domain)
+        mitigation_factor = round(0.20 + 0.80 * use_weight, 4)
+        raw_score = float(updated[component].get("score", 0.0))
+        adjusted_score = round(raw_score * mitigation_factor, 4)
+        domain_decision = domain_policy_decision(policy_gate, domain) or {}
+        updated[component]["raw_score_before_policy"] = round(raw_score, 4)
+        updated[component]["score"] = adjusted_score
+        updated[component]["observe_policy_gate"] = {
+            "domain": domain,
+            "decision": domain_decision.get("decision", "ALLOW"),
+            "allowed_use": domain_decision.get("allowed_use", "authoritative"),
+            "trust_score": domain_decision.get("trust_score"),
+            "required_assurance": domain_decision.get("required_assurance"),
+            "use_weight": round(use_weight, 4),
+            "mitigation_factor": mitigation_factor,
+            "interpretation": "external observe impact scaled by usage authority",
+        }
+    return updated
 
 
 def _impact_level(score: float) -> str:

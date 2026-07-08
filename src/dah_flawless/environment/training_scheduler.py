@@ -11,6 +11,10 @@ from typing import Optional
 from dah_flawless.attacks.red_agent import RedAgent
 from dah_flawless.blue.feedback_learner import default_blue_policy_state
 from dah_flawless.config import (
+    DEFAULT_BLUE_READINESS_GATE_ENABLED,
+    DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+    DEFAULT_BLUE_READINESS_THRESHOLD,
+    DEFAULT_BLUE_READINESS_WINDOW,
     DEFAULT_BLUE_UPDATE_EPISODES,
     DEFAULT_EVAL_EPISODES,
     DEFAULT_MUTATION_PROFILE,
@@ -21,6 +25,7 @@ from dah_flawless.config import (
     DEFAULT_STEPS_PER_EPISODE,
 )
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
+from dah_flawless.environment.readiness import assess_blue_readiness
 from dah_flawless.environment.simulator import run_simulation
 from dah_flawless.scoring.metrics import summarize_logs
 
@@ -58,6 +63,10 @@ class TrainingScheduler:
         initial_state: dict | None = None,
         red_policy_state: dict | None = None,
         blue_policy_state: dict | None = None,
+        blue_readiness_gate_enabled: bool = DEFAULT_BLUE_READINESS_GATE_ENABLED,
+        blue_readiness_threshold: float = DEFAULT_BLUE_READINESS_THRESHOLD,
+        blue_readiness_min_samples: int = DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+        blue_readiness_window: int = DEFAULT_BLUE_READINESS_WINDOW,
     ):
         _validate_non_negative("blue_update_episodes", blue_update_episodes)
         _validate_non_negative("red_update_episodes", red_update_episodes)
@@ -66,6 +75,12 @@ class TrainingScheduler:
             raise ValueError("training schedule must contain at least one episode")
         if steps_per_episode < 1:
             raise ValueError("steps_per_episode must be >= 1")
+        if not 0.0 <= blue_readiness_threshold <= 1.0:
+            raise ValueError("blue_readiness_threshold must be between 0 and 1")
+        if blue_readiness_min_samples < 1:
+            raise ValueError("blue_readiness_min_samples must be >= 1")
+        if blue_readiness_window < 1:
+            raise ValueError("blue_readiness_window must be >= 1")
 
         self.seed = seed
         self.steps_per_episode = steps_per_episode
@@ -73,6 +88,10 @@ class TrainingScheduler:
         self.stealth_mode = stealth_mode
         self.mutation_profile = mutation_profile
         self.initial_state = deepcopy(initial_state) if initial_state is not None else None
+        self.blue_readiness_gate_enabled = blue_readiness_gate_enabled
+        self.blue_readiness_threshold = blue_readiness_threshold
+        self.blue_readiness_min_samples = blue_readiness_min_samples
+        self.blue_readiness_window = blue_readiness_window
         self.red_policy_state = (
             deepcopy(red_policy_state)
             if red_policy_state is not None
@@ -109,6 +128,13 @@ class TrainingScheduler:
                 episode_number += 1
                 episode_seed = self.seed + episode_number - 1
                 episode_initial_state = deepcopy(self.initial_state) if self.initial_state is not None else None
+                readiness = self._blue_readiness(all_logs)
+                effective_red_update = block.red_update_enabled and (
+                    not self.blue_readiness_gate_enabled or readiness["ready"]
+                )
+                effective_blue_update = block.blue_update_enabled or (
+                    self.blue_readiness_gate_enabled and block.red_update_enabled and not readiness["ready"]
+                )
                 step_logs, step_summary = run_simulation(
                     seed=episode_seed,
                     rounds=self.steps_per_episode,
@@ -116,8 +142,8 @@ class TrainingScheduler:
                     stealth_mode=self.stealth_mode,
                     mutation_profile=self.mutation_profile,
                     initial_state=episode_initial_state,
-                    red_update_enabled=block.red_update_enabled,
-                    blue_update_enabled=block.blue_update_enabled,
+                    red_update_enabled=effective_red_update,
+                    blue_update_enabled=effective_blue_update,
                     red_policy_state=red_policy_state,
                     blue_policy_state=blue_policy_state,
                     previous_logs=all_logs,
@@ -135,6 +161,9 @@ class TrainingScheduler:
                         episode_in_block=episode_in_block,
                         episode_seed=episode_seed,
                         global_step=global_step,
+                        effective_red_update_enabled=effective_red_update,
+                        effective_blue_update_enabled=effective_blue_update,
+                        blue_readiness=readiness,
                     )
                     entry = attach_hash(prev_hash, body)
                     prev_hash = entry["this_hash"]
@@ -153,6 +182,15 @@ class TrainingScheduler:
                         "steps_per_episode": self.steps_per_episode,
                         "global_step_start": global_step - len(step_logs) + 1,
                         "global_step_end": global_step,
+                        "planned_update_mode": {
+                            "red_update_enabled": block.red_update_enabled,
+                            "blue_update_enabled": block.blue_update_enabled,
+                        },
+                        "effective_update_mode": {
+                            "red_update_enabled": effective_red_update,
+                            "blue_update_enabled": effective_blue_update,
+                        },
+                        "blue_readiness_gate": readiness,
                     }
                 )
                 episode_summaries.append(episode_summary)
@@ -166,6 +204,7 @@ class TrainingScheduler:
                     "steps_per_episode": self.steps_per_episode,
                     "red_update_enabled": block.red_update_enabled,
                     "blue_update_enabled": block.blue_update_enabled,
+                    "effective_update_counts": _effective_update_counts(episode_summaries),
                     "red_policy_start": block_red_policy_start,
                     "red_policy_end": deepcopy(red_policy_state),
                     "blue_policy_start": block_blue_policy_start,
@@ -186,12 +225,27 @@ class TrainingScheduler:
                 "stealth_mode": self.stealth_mode,
                 "mutation_profile": self.mutation_profile,
                 "schedule": [block.to_dict() for block in self.blocks],
+                "blue_readiness_gate": {
+                    "enabled": self.blue_readiness_gate_enabled,
+                    "threshold": self.blue_readiness_threshold,
+                    "min_samples": self.blue_readiness_min_samples,
+                    "window": self.blue_readiness_window,
+                    "final": self._blue_readiness(all_logs),
+                },
                 "block_summaries": block_summaries,
                 "final_red_policy_state": red_policy_state,
                 "final_blue_policy_state": blue_policy_state,
             }
         )
         return all_logs, summary
+
+    def _blue_readiness(self, logs: list[dict]) -> dict:
+        return assess_blue_readiness(
+            logs,
+            threshold=self.blue_readiness_threshold,
+            min_samples=self.blue_readiness_min_samples,
+            window=self.blue_readiness_window,
+        )
 
 
 def run_training_schedule(
@@ -207,6 +261,10 @@ def run_training_schedule(
     stealth_mode: str = DEFAULT_STEALTH_MODE,
     mutation_profile: str = DEFAULT_MUTATION_PROFILE,
     initial_state: dict | None = None,
+    blue_readiness_gate_enabled: bool = DEFAULT_BLUE_READINESS_GATE_ENABLED,
+    blue_readiness_threshold: float = DEFAULT_BLUE_READINESS_THRESHOLD,
+    blue_readiness_min_samples: int = DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+    blue_readiness_window: int = DEFAULT_BLUE_READINESS_WINDOW,
 ) -> tuple[list[dict], dict]:
     scheduler = TrainingScheduler(
         seed=seed,
@@ -218,6 +276,10 @@ def run_training_schedule(
         stealth_mode=stealth_mode,
         mutation_profile=mutation_profile,
         initial_state=initial_state,
+        blue_readiness_gate_enabled=blue_readiness_gate_enabled,
+        blue_readiness_threshold=blue_readiness_threshold,
+        blue_readiness_min_samples=blue_readiness_min_samples,
+        blue_readiness_window=blue_readiness_window,
     )
     logs, summary = scheduler.run()
     if log_path is not None:
@@ -237,6 +299,9 @@ def _training_log_body(
     episode_in_block: int,
     episode_seed: int,
     global_step: int,
+    effective_red_update_enabled: bool,
+    effective_blue_update_enabled: bool,
+    blue_readiness: dict,
 ) -> dict:
     body = deepcopy(step_log)
     body.pop("prev_hash", None)
@@ -250,10 +315,31 @@ def _training_log_body(
     body["episode_step"] = body["round"]
     body["global_step"] = global_step
     body["update_mode"] = {
-        "red_update_enabled": block.red_update_enabled,
-        "blue_update_enabled": block.blue_update_enabled,
+        "red_update_enabled": effective_red_update_enabled,
+        "blue_update_enabled": effective_blue_update_enabled,
+        "planned_red_update_enabled": block.red_update_enabled,
+        "planned_blue_update_enabled": block.blue_update_enabled,
+        "blue_readiness_gate": deepcopy(blue_readiness),
     }
     return body
+
+
+def _effective_update_counts(episode_summaries: list[dict]) -> dict:
+    counts = {
+        "red_update_episodes": 0,
+        "blue_update_episodes": 0,
+        "red_updates_blocked_by_readiness": 0,
+    }
+    for summary in episode_summaries:
+        planned = summary.get("planned_update_mode", {})
+        effective = summary.get("effective_update_mode", {})
+        if effective.get("red_update_enabled"):
+            counts["red_update_episodes"] += 1
+        if effective.get("blue_update_enabled"):
+            counts["blue_update_episodes"] += 1
+        if planned.get("red_update_enabled") and not effective.get("red_update_enabled"):
+            counts["red_updates_blocked_by_readiness"] += 1
+    return counts
 
 
 def _default_red_policy_state(seed: int, stealth_mode: str, mutation_profile: str) -> dict:

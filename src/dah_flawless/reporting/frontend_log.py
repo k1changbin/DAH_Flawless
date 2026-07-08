@@ -60,9 +60,17 @@ def _summary_view(rounds: list[dict], summary: dict) -> dict[str, Any]:
         "goal_success_rate": summary.get("goal_success_rate"),
         "avg_goal_reward": summary.get("avg_goal_reward"),
         "avg_mission_impact_score": summary.get("avg_mission_impact_score"),
+        "avg_containment_score": summary.get("avg_containment_score"),
+        "contained_round_count": summary.get("contained_round_count"),
         "avg_step_count": summary.get("avg_step_count") or _avg([item["step_count"] for item in rounds]),
         "final_availability": summary.get("final_availability"),
         "min_availability": summary.get("min_availability"),
+        "avg_availability_recovery": summary.get("avg_availability_recovery"),
+        "episode_budget_reset_count": summary.get("episode_budget_reset_count"),
+        "maintenance_recovery_count": summary.get("maintenance_recovery_count"),
+        "avg_observe_policy_min_trust": summary.get("avg_observe_policy_min_trust"),
+        "observe_policy_restricted_round_count": summary.get("observe_policy_restricted_round_count"),
+        "observe_policy_domain_decisions": summary.get("observe_policy_domain_decisions", {}),
     }
 
 
@@ -88,6 +96,8 @@ def _round_view(entry: dict) -> dict[str, Any]:
             "intended_effect": goal.get("intended_effect"),
         },
         "outcome": outcome,
+        "availability_recovery": _availability_recovery_view(entry.get("availability_recovery", {})),
+        "observe_policy": _observe_policy_view(entry.get("observe_policy_gate", {})),
         "action_runs": _action_runs(timeline),
         "highlights": _highlights(timeline, outcome),
         "timeline": timeline,
@@ -98,6 +108,7 @@ def _step_view(step: dict) -> dict[str, Any]:
     score = step.get("step_score", {})
     goal_score = score.get("evidence", {}).get("goal_score", {})
     mission_impact = score.get("evidence", {}).get("mission_impact", {})
+    containment = score.get("evidence", {}).get("containment", {})
     red_step = step.get("red_step", {})
     return {
         "step": step.get("step"),
@@ -121,6 +132,7 @@ def _step_view(step: dict) -> dict[str, Any]:
             }
             for action in step.get("defense_actions", [])
         ],
+        "observe_policy": _observe_policy_view(step.get("observe_policy_gate", {})),
         "score": {
             "winner": score.get("winner"),
             "winner_side": _winner_side(score),
@@ -132,6 +144,10 @@ def _step_view(step: dict) -> dict[str, Any]:
             "goal_reward": _round_float(score.get("goal_reward")),
             "effect_score": _round_float(goal_score.get("effect_score")),
             "mission_impact_score": _round_float(mission_impact.get("mission_impact_score")),
+            "containment_score": _round_float(
+                score.get("containment_score", containment.get("containment_score"))
+            ),
+            "containment_level": containment.get("containment_level"),
             "availability": _round_float(score.get("availability")),
         },
         "budgets": _budget_view(step.get("budgets", {})),
@@ -141,6 +157,7 @@ def _step_view(step: dict) -> dict[str, Any]:
 def _outcome_view(score: dict, termination_reason: str | None) -> dict[str, Any]:
     winner = score.get("winner")
     mission_impact = score.get("evidence", {}).get("mission_impact", {})
+    containment = score.get("evidence", {}).get("containment", {})
     return {
         "winner": winner,
         "winner_side": _winner_side(score),
@@ -153,6 +170,8 @@ def _outcome_view(score: dict, termination_reason: str | None) -> dict[str, Any]
         "goal_id": score.get("goal_id"),
         "goal_reward": _round_float(score.get("goal_reward")),
         "mission_impact_score": _round_float(mission_impact.get("mission_impact_score")),
+        "containment_score": _round_float(score.get("containment_score", containment.get("containment_score"))),
+        "containment_level": containment.get("containment_level"),
         "availability": _round_float(score.get("availability")),
         "reason": score.get("outcome_reason") or _outcome_reason(score, termination_reason),
     }
@@ -243,6 +262,53 @@ def _budget_view(budgets: dict) -> dict[str, Any]:
         "red_mutation_steps",
     )
     return {key: _round_float(budgets.get(key)) for key in keys if key in budgets}
+
+
+def _availability_recovery_view(recovery: dict) -> dict[str, Any]:
+    if not recovery:
+        return {}
+    keys = (
+        "algorithm",
+        "scope",
+        "reset_scope",
+        "maintenance_cycle",
+        "previous_active_defense_cost",
+        "cleared_active_defense_count",
+        "cleared_pending_defense_count",
+        "fatigue_penalty",
+        "availability_before",
+        "availability_after",
+        "availability_reset_target",
+        "availability_reset_delta",
+        "availability_recovery_applied",
+        "trust_before",
+        "trust_after",
+        "trust_reset_target",
+        "trust_reset_delta",
+        "trust_recovery_applied",
+    )
+    return {key: _round_float(recovery.get(key)) for key in keys if key in recovery}
+
+
+def _observe_policy_view(policy_gate: dict) -> dict[str, Any]:
+    if not policy_gate:
+        return {}
+    return {
+        "algorithm": policy_gate.get("algorithm"),
+        "scope": policy_gate.get("scope"),
+        "min_trust_score": _round_float(policy_gate.get("min_trust_score")),
+        "restricted_domains": list(policy_gate.get("restricted_domains", [])),
+        "domain_decisions": {
+            domain: {
+                "decision": decision.get("decision"),
+                "allowed_use": decision.get("allowed_use"),
+                "trust_score": _round_float(decision.get("trust_score")),
+                "required_assurance": _round_float(decision.get("required_assurance")),
+                "use_weight": _round_float(decision.get("use_weight")),
+            }
+            for domain, decision in (policy_gate.get("by_domain") or {}).items()
+        },
+    }
 
 
 def _policy_snapshot(summary: dict) -> dict[str, Any]:

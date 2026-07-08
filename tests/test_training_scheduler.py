@@ -36,6 +36,7 @@ class TrainingSchedulerTests(unittest.TestCase):
             red_update_episodes=1,
             eval_episodes=1,
             steps_per_episode=3,
+            blue_readiness_gate_enabled=False,
         )
         blue_block, red_block, eval_block = summary["block_summaries"]
 
@@ -45,6 +46,25 @@ class TrainingSchedulerTests(unittest.TestCase):
         self.assertEqual(red_block["blue_policy_start"], red_block["blue_policy_end"])
         self.assertEqual(eval_block["red_policy_start"], eval_block["red_policy_end"])
         self.assertEqual(eval_block["blue_policy_start"], eval_block["blue_policy_end"])
+
+    def test_readiness_gate_blocks_red_updates_until_blue_is_ready(self):
+        logs, summary = run_training_schedule(
+            seed=5,
+            blue_update_episodes=1,
+            red_update_episodes=1,
+            eval_episodes=0,
+            steps_per_episode=3,
+        )
+        red_block = summary["block_summaries"][1]
+
+        self.assertGreater(red_block["effective_update_counts"]["red_updates_blocked_by_readiness"], 0)
+        self.assertEqual(red_block["red_policy_start"], red_block["red_policy_end"])
+        self.assertTrue(all(not entry["update_mode"]["red_update_enabled"] for entry in logs[3:]))
+        self.assertTrue(all(entry["update_mode"]["blue_update_enabled"] for entry in logs[3:]))
+        self.assertEqual(
+            logs[3]["update_mode"]["blue_readiness_gate"]["reason"],
+            "insufficient_blue_training_samples",
+        )
 
     def test_scheduler_rejects_empty_schedule(self):
         with self.assertRaises(ValueError):

@@ -13,6 +13,7 @@ from dah_flawless.config import (
     RECOVERY_TARGET,
     RECOVERY_WINDOW,
 )
+from dah_flawless.blue.defense_effects import assess_defense_containment
 from dah_flawless.scoring.goal_scorer import score_red_goal
 from dah_flawless.scoring.mission_impact import assess_mission_impact, blend_goal_reward_with_mission_impact
 from dah_flawless.schemas import Attack, DefenseAction, Score, Threat
@@ -54,6 +55,17 @@ def score_round(
         actions=actions,
     )
     goal_score = blend_goal_reward_with_mission_impact(goal_score, mission_impact)
+    containment = assess_defense_containment(
+        pre_defense_state=pre_defense_state,
+        post_defense_state=post_defense_state,
+        attack=attack,
+        threats=threats,
+        actions=actions,
+        goal_score=goal_score,
+        detection_success=detection_success,
+        recovery_success=recovery_success,
+        attack_success=attack_success,
+    )
     attrition = _attrition_evidence(pre_defense_state, post_defense_state, actions, goal_score, mission_impact)
     goal_score = _shape_goal_reward(
         goal_score,
@@ -71,6 +83,7 @@ def score_round(
         availability=availability,
         attrition=attrition,
         goal_score=goal_score,
+        containment=containment,
     )
 
     evidence["defense_actions"] = [action.action for action in actions]
@@ -81,6 +94,7 @@ def score_round(
     evidence["current_recovery_success"] = current_recovery_success
     evidence["mission_impact"] = mission_impact
     evidence["goal_score"] = goal_score
+    evidence["containment"] = containment
     evidence["attrition"] = attrition
     evidence["outcome"] = outcome
     return Score(
@@ -98,6 +112,7 @@ def score_round(
         winner_side=outcome["winner_side"],
         winner_detail=outcome["winner_detail"],
         outcome_reason=outcome["reason"],
+        containment_score=containment["containment_score"],
     )
 
 
@@ -276,10 +291,20 @@ def _classify_outcome(
     availability: float,
     attrition: dict,
     goal_score: dict,
+    containment: dict,
 ) -> dict:
     goal_success = bool(goal_score.get("goal_success", False))
+    containment_score = float(containment.get("containment_score", 0.0))
+    contained = bool(containment.get("contained", False))
     if attrition["triggered"]:
         return _outcome("RED_ATTRITION", "RED", "ATTRITION", "blue_defense_pressure_reduced_mission_availability")
+    if attack_success and goal_success and not detection_success and containment_score >= 0.45:
+        return _outcome(
+            "DRAW",
+            "DRAW",
+            "POLICY_CONTAINMENT",
+            "policy_gate_limited_authoritative_use_without_attack_detection",
+        )
     if attack_success and goal_success and not detection_success:
         return _outcome("RED_BREACH", "RED", "BREACH", "undetected_attack_achieved_selected_goal")
     if attack_success and not detection_success:
@@ -288,6 +313,10 @@ def _classify_outcome(
         return _outcome("DRAW", "DRAW", "FALSE_POSITIVE", "blue_flagged_threat_without_scorer_attack_effect")
     if recovery_success and availability >= RECOVERY_TARGET:
         return _outcome("BLUE_RECOVERY", "BLUE", "RECOVERY", "blue_detected_and_restored_trusted_observe")
+    if detection_success and contained and availability >= AVAIL_FLOOR:
+        return _outcome("BLUE", "BLUE", "CONTAINMENT", "blue_detected_and_contained_attack_effect")
+    if detection_success and containment_score >= 0.45 and availability >= AVAIL_FLOOR:
+        return _outcome("BLUE", "BLUE", "PARTIAL_CONTAINMENT", "blue_limited_attack_effect_without_full_recovery")
     if detection_success and availability >= AVAIL_FLOOR:
         return _outcome("BLUE", "BLUE", "DETECTION", "blue_detected_or_contained_attack_effect")
     if attack_success:

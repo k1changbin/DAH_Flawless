@@ -42,6 +42,19 @@ class BlueGoalConsistencyTests(unittest.TestCase):
         self.assertIn("EFFECT_TELEMETRY_TRUST_EROSION", telemetry_threat.tags)
         self.assertIn("INTERNAL_EXTERNAL_TELEMETRY_DISAGREE", telemetry_threat.tags)
 
+    def test_safety_critical_telemetry_residual_becomes_threat(self):
+        state = create_baseline_state(seed=1)
+        history = make_history(state)
+        state["blue_observed"]["telemetry"]["battery_percent"] = 21.4
+
+        tags, threats, _ = detect_threats(redact_state(state), history, state["capabilities"])
+        telemetry_threat = next(threat for threat in threats if threat.target == "telemetry")
+
+        self.assertIn("TELEMETRY_SAFETY_ANCHOR_RESIDUAL", tags)
+        self.assertIn("EFFECT_TELEMETRY_TRUST_EROSION", telemetry_threat.tags)
+        self.assertIn("TELEMETRY_SAFETY_ANCHOR_RESIDUAL", telemetry_threat.tags)
+        self.assertGreaterEqual(telemetry_threat.confidence, 0.72)
+
     def test_channel_suppression_selects_channel_timing_reset(self):
         state = create_baseline_state(seed=1)
         history = make_history(state)
@@ -58,6 +71,22 @@ class BlueGoalConsistencyTests(unittest.TestCase):
         self.assertIn("RESET_CHANNEL_TIMING", [action.action for action in actions])
         self.assertEqual(defended["blue_observed"]["comms"]["heartbeat_gap_ms"], 0)
         self.assertEqual(defended["blue_observed"]["comms"]["packet_interval_jitter_ms"], 18)
+
+    def test_recommended_area_conflict_becomes_wrong_target_effect(self):
+        state = create_baseline_state(seed=1)
+        history = make_history(state)
+        state["blue_observed"]["mission"]["recommended_area"] = "C"
+
+        _, threats, log = detect_threats(redact_state(state), history, state["capabilities"])
+        mission_threat = next(threat for threat in threats if threat.target == "mission")
+
+        self.assertIn("EFFECT_WRONG_TARGET_SELECTION", mission_threat.tags)
+        hypothesis = next(
+            item
+            for item in log["after"]["effect_hypotheses"]
+            if item["goal_id"] == "WRONG_TARGET_SELECTION"
+        )
+        self.assertIn("recommended_conflicts_with_observed_top=True", hypothesis["evidence"])
 
     def test_hold_command_restores_current_internal_c2_anchor(self):
         state = create_baseline_state(seed=1)

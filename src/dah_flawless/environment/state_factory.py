@@ -186,6 +186,10 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "active_defense_slots": 2,
             "active_defenses": [],
             "pending_defenses": [],
+            "episode_initial_budget": {
+                "availability": mission["availability"],
+                "trust_budget": mission["trust_budget"],
+            },
             "domain_trust": deepcopy(blue_policy["domain_trust"]),
             "detection_sensitivity": deepcopy(blue_policy["detection_sensitivity"]),
             "escalation_threshold": deepcopy(blue_policy["escalation_threshold"]),

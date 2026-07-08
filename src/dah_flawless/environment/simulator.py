@@ -18,17 +18,15 @@ from dah_flawless.blue.feedback_learner import (
 )
 from dah_flawless.blue.incident_report import write_incident_report
 from dah_flawless.blue.mission_monitor import estimate_mission_risk
+from dah_flawless.blue.observe_policy_gate import evaluate_observe_policy
 from dah_flawless.blue.threat_detection import detect_threats
 from dah_flawless.config import (
-    ACTIVE_DEFENSE_RECOVERY_PENALTY,
-    AVAILABILITY_RECOVERY_PER_ROUND,
     DEFAULT_ROUNDS,
     DEFAULT_SCENARIO,
     DEFAULT_SEED,
     DEFAULT_MUTATION_PROFILE,
     DEFAULT_STEALTH_MODE,
     ROUND_SECONDS,
-    TRUST_BUDGET_RECOVERY_PER_ROUND,
     SCRIPTED_ATTACKS,
 )
 from dah_flawless.environment.hash_log import GENESIS_HASH, attach_hash, write_jsonl
@@ -73,6 +71,7 @@ def run_simulation(
     state = deepcopy(initial_state) if initial_state is not None else create_baseline_state(seed, scenario)
     if blue_policy_state is not None:
         apply_blue_policy_state(state, blue_policy_state)
+    mark_episode_initial_budget(state, overwrite=True)
     scenario_label = state.get("scenario", scenario)
     history = make_history(state)
     reviewer = policy_update_reviewer or build_policy_update_reviewer()
@@ -108,6 +107,7 @@ def run_simulation(
 
     for round_number in range(1, rounds + 1):
         state = _advance_normal_state(state, round_number)
+        availability_recovery = deepcopy(state.get("defense_runtime", {}).get("availability_recovery", {}))
         redacted_for_red = redact_state(state)
         pre_attack_tag_details = derive_tag_details(redacted_for_red, history, redacted_for_red["capabilities"])
         pre_attack_tags = [detail.tag for detail in pre_attack_tag_details]
@@ -133,6 +133,13 @@ def run_simulation(
             redacted_for_blue, history, attacked_state["capabilities"]
         )
         threats, blue_detection_policy_log = apply_detection_policy(threats, export_blue_policy_state(attacked_state))
+        observe_policy_gate, observe_policy_log = evaluate_observe_policy(
+            redacted_for_blue,
+            history,
+            attacked_state["capabilities"],
+        )
+        attacked_state.setdefault("defense_runtime", {})["observe_policy_gate"] = observe_policy_gate
+        pre_defense_state.setdefault("defense_runtime", {})["observe_policy_gate"] = deepcopy(observe_policy_gate)
         risks, risk_log = estimate_mission_risk(redacted_for_blue, threats)
         actions, defense_log = plan_defense(threats, risks, attacked_state["mission"], attacked_state["defense_runtime"])
         blue_policy_before_round = export_blue_policy_state(attacked_state)
@@ -203,6 +210,7 @@ def run_simulation(
             "truth_storage_key": 'state["world"]',
             "raw_world_source_hash": state["world"].get("raw_world_hash"),
             "raw_world_feature_scores": deepcopy(state["world"].get("raw_world_feature_scores", {})),
+            "availability_recovery": availability_recovery,
             "red_situation_tags": pre_attack_tags,
             "red_situation_tag_details": [detail.to_dict() for detail in pre_attack_tag_details],
             "situation_tags": situation_tags,
@@ -212,6 +220,7 @@ def run_simulation(
             "red_tactic": red_tactic,
             "threats": [threat.to_dict() for threat in threats],
             "mission_risks": [risk.to_dict() for risk in risks],
+            "observe_policy_gate": deepcopy(observe_policy_gate),
             "defense_actions": defended_state["defense_runtime"]["active_defenses"],
             "score": score.to_dict(),
             "causal_consistency": causal_consistency,
@@ -241,6 +250,7 @@ def run_simulation(
                 mutation_log,
                 threat_log,
                 blue_detection_policy_log,
+                observe_policy_log,
                 risk_log,
                 defense_log,
                 causal_log,
@@ -320,8 +330,7 @@ def run_simulation(
 def _advance_normal_state(state: dict, round_number: int) -> dict:
     next_state = deepcopy(state)
     next_state["round"] = round_number
-    if round_number > 1:
-        _recover_operational_budget(next_state)
+    _reset_round_operational_budget(next_state, round_number)
     next_state["world"]["time"]["round"] = round_number
     next_state["world"]["time"]["true_timestamp"] += ROUND_SECONDS
     next_state["world"]["command"]["expected_sequence_number"] += 1
@@ -350,15 +359,59 @@ def _advance_normal_state(state: dict, round_number: int) -> dict:
     return next_state
 
 
-def _recover_operational_budget(state: dict) -> None:
-    previous_cost = sum(
-        float(action.get("availability_cost", 0.0))
-        for action in state["defense_runtime"].get("active_defenses", [])
-    )
-    penalty = min(AVAILABILITY_RECOVERY_PER_ROUND, previous_cost * ACTIVE_DEFENSE_RECOVERY_PENALTY)
-    availability_recovery = max(0.02, AVAILABILITY_RECOVERY_PER_ROUND - penalty)
-    trust_recovery = max(0.01, TRUST_BUDGET_RECOVERY_PER_ROUND - penalty * 0.8)
+def mark_episode_initial_budget(state: dict, *, overwrite: bool = False) -> dict:
+    """Record the per-round combat budget baseline for this simulation run."""
 
+    runtime = state.setdefault("defense_runtime", {})
+    if overwrite or "episode_initial_budget" not in runtime:
+        mission = state["mission"]
+        runtime["episode_initial_budget"] = {
+            "availability": round(float(mission.get("availability", 1.0)), 4),
+            "trust_budget": round(float(mission.get("trust_budget", 1.0)), 4),
+        }
+    return state
+
+
+def _reset_round_operational_budget(state: dict, round_number: int) -> None:
+    runtime = state.setdefault("defense_runtime", {})
     mission = state["mission"]
-    mission["availability"] = min(1.0, round(mission["availability"] + availability_recovery, 4))
-    mission["trust_budget"] = min(1.0, round(mission["trust_budget"] + trust_recovery, 4))
+    mark_episode_initial_budget(state)
+
+    initial_budget = runtime["episode_initial_budget"]
+    target_availability = round(float(initial_budget.get("availability", 1.0)), 4)
+    target_trust = round(float(initial_budget.get("trust_budget", 1.0)), 4)
+    availability_before = round(float(mission.get("availability", target_availability)), 4)
+    trust_before = round(float(mission.get("trust_budget", target_trust)), 4)
+    active_defenses = runtime.get("active_defenses", [])
+    pending_defenses = runtime.get("pending_defenses", [])
+    previous_cost = sum(float(action.get("availability_cost", 0.0)) for action in active_defenses)
+
+    mission["availability"] = target_availability
+    mission["trust_budget"] = target_trust
+    runtime["active_defenses"] = []
+    runtime["pending_defenses"] = []
+    runtime.pop("combat_attrition", None)
+    runtime.pop("combat_budget", None)
+    runtime.pop("red_combat_pressure", None)
+    runtime["availability_recovery"] = {
+        "algorithm": "round_episode_budget_reset_v1",
+        "round": round_number,
+        "scope": "round_episode",
+        "reset_scope": "availability_fight_only_inside_one_episode",
+        "previous_active_defense_cost": round(previous_cost, 4),
+        "cleared_active_defense_count": len(active_defenses),
+        "cleared_pending_defense_count": len(pending_defenses),
+        "maintenance_cycle": False,
+        "availability_before": availability_before,
+        "availability_after": target_availability,
+        "availability_reset_target": target_availability,
+        "availability_reset_delta": round(target_availability - availability_before, 4),
+        "availability_recovery_planned": 0.0,
+        "availability_recovery_applied": 0.0,
+        "trust_before": trust_before,
+        "trust_after": target_trust,
+        "trust_reset_target": target_trust,
+        "trust_reset_delta": round(target_trust - trust_before, 4),
+        "trust_recovery_planned": 0.0,
+        "trust_recovery_applied": 0.0,
+    }

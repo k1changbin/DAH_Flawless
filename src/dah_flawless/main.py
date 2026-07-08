@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 
 from dah_flawless.config import (
+    DEFAULT_BLUE_READINESS_MIN_SAMPLES,
+    DEFAULT_BLUE_READINESS_THRESHOLD,
+    DEFAULT_BLUE_READINESS_WINDOW,
     DEFAULT_BLUE_UPDATE_EPISODES,
     DEFAULT_EVAL_EPISODES,
     DEFAULT_RED_UPDATE_EPISODES,
@@ -46,6 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--blue-update-episodes", type=int, default=DEFAULT_BLUE_UPDATE_EPISODES)
     parser.add_argument("--red-update-episodes", type=int, default=DEFAULT_RED_UPDATE_EPISODES)
     parser.add_argument("--eval-episodes", type=int, default=DEFAULT_EVAL_EPISODES)
+    parser.add_argument(
+        "--no-blue-readiness-gate",
+        action="store_true",
+        help="Disable the staged gate that blocks Red updates until Blue reaches a defense success threshold.",
+    )
+    parser.add_argument("--blue-readiness-threshold", type=float, default=DEFAULT_BLUE_READINESS_THRESHOLD)
+    parser.add_argument("--blue-readiness-min-samples", type=int, default=DEFAULT_BLUE_READINESS_MIN_SAMPLES)
+    parser.add_argument("--blue-readiness-window", type=int, default=DEFAULT_BLUE_READINESS_WINDOW)
     parser.add_argument(
         "--episodes",
         type=int,
@@ -163,6 +174,10 @@ def main() -> None:
             stealth_mode=args.red_stealth,
             mutation_profile=args.mutation_profile,
             initial_state=initial_state,
+            blue_readiness_gate_enabled=not args.no_blue_readiness_gate,
+            blue_readiness_threshold=args.blue_readiness_threshold,
+            blue_readiness_min_samples=args.blue_readiness_min_samples,
+            blue_readiness_window=args.blue_readiness_window,
         )
         print(f"wrote training schedule with {summary['episodes']} episodes / {len(logs)} steps to {args.out}")
     elif args.episodes is not None:

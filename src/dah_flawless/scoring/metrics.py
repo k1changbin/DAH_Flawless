@@ -21,6 +21,18 @@ def summarize_logs(logs: list[dict]) -> dict:
         float(entry["score"].get("evidence", {}).get("mission_impact", {}).get("mission_impact_score", 0.0))
         for entry in logs
     ]
+    containment_scores = [
+        float(
+            entry["score"].get(
+                "containment_score",
+                entry["score"].get("evidence", {}).get("containment", {}).get("containment_score", 0.0),
+            )
+        )
+        for entry in logs
+    ]
+    contained_rounds = sum(
+        1 for entry in logs if entry["score"].get("evidence", {}).get("containment", {}).get("contained")
+    )
     high_mission_impacts = sum(1 for impact in mission_impacts if impact >= 0.75)
     availability = [entry["score"]["availability"] for entry in logs]
     causal_scores = [
@@ -37,6 +49,22 @@ def summarize_logs(logs: list[dict]) -> dict:
     ]
     attrition_net_costs = [float(item.get("net_defense_cost", 0.0)) for item in attrition_records]
     attrition_ratios = [float(item.get("defense_to_attack_cost_ratio", 0.0)) for item in attrition_records]
+    recovery_records = [entry.get("availability_recovery", {}) for entry in logs if entry.get("availability_recovery")]
+    episode_budget_resets = [
+        item for item in recovery_records if item.get("algorithm") == "round_episode_budget_reset_v1"
+    ]
+    availability_recoveries = [
+        float(item.get("availability_recovery_applied", 0.0)) for item in recovery_records
+    ]
+    trust_recoveries = [float(item.get("trust_recovery_applied", 0.0)) for item in recovery_records]
+    policy_gates = [entry.get("observe_policy_gate", {}) for entry in logs if entry.get("observe_policy_gate")]
+    policy_min_trust = [float(gate.get("min_trust_score", 1.0)) for gate in policy_gates]
+    policy_restricted_rounds = sum(1 for gate in policy_gates if gate.get("restricted_domains"))
+    policy_domain_decisions = Counter(
+        f"{domain}:{decision.get('decision')}"
+        for gate in policy_gates
+        for domain, decision in (gate.get("by_domain") or {}).items()
+    )
 
     return {
         "rounds": len(logs),
@@ -54,6 +82,10 @@ def summarize_logs(logs: list[dict]) -> dict:
         "avg_goal_reward": round(sum(goal_rewards) / len(goal_rewards), 4) if goal_rewards else 0.0,
         "avg_mission_impact_score": round(sum(mission_impacts) / len(mission_impacts), 4) if mission_impacts else 0.0,
         "high_mission_impact_count": high_mission_impacts,
+        "avg_containment_score": round(sum(containment_scores) / len(containment_scores), 4)
+        if containment_scores
+        else 0.0,
+        "contained_round_count": contained_rounds,
         "avg_causal_consistency": round(sum(causal_scores) / len(causal_scores), 4) if causal_scores else 0.0,
         "causal_warning_count": causal_warnings,
         "causal_failure_count": causal_failures,
@@ -65,6 +97,18 @@ def summarize_logs(logs: list[dict]) -> dict:
         "avg_attrition_defense_to_attack_ratio": round(sum(attrition_ratios) / len(attrition_ratios), 4)
         if attrition_ratios
         else 0.0,
+        "avg_availability_recovery": round(sum(availability_recoveries) / len(availability_recoveries), 4)
+        if availability_recoveries
+        else 0.0,
+        "total_availability_recovery": round(sum(availability_recoveries), 4),
+        "episode_budget_reset_count": len(episode_budget_resets),
+        "avg_trust_recovery": round(sum(trust_recoveries) / len(trust_recoveries), 4) if trust_recoveries else 0.0,
+        "maintenance_recovery_count": sum(1 for item in recovery_records if item.get("maintenance_cycle")),
+        "avg_observe_policy_min_trust": round(sum(policy_min_trust) / len(policy_min_trust), 4)
+        if policy_min_trust
+        else None,
+        "observe_policy_restricted_round_count": policy_restricted_rounds,
+        "observe_policy_domain_decisions": dict(sorted(policy_domain_decisions.items())),
     }
 
 

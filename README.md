@@ -153,7 +153,7 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `140 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, outcome label/reward shaping, attrition cost-effectiveness guard, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, frontend combat replay log, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 기준으로 `150 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Blue Defense-Effect Contract, containment score, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, outcome label/reward shaping, attrition cost-effectiveness guard, Blue readiness gate, Blue episode availability budget reset, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, frontend combat replay log, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
 ## 로그에서 볼 것
 
@@ -175,6 +175,7 @@ python -m unittest discover -s tests
 | `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약. mission-impact score 포함 |
 | `score.goal_success` | Red가 선택한 cyber-effect 목표 달성 여부 |
 | `score.goal_reward` | Red Goal Planner/Feedback Learner에 반영되는 목표별 reward. contract-supported 목표는 mission-impact 보정 포함 |
+| `score.containment_score` | Blue가 완전 복구 전 단계에서 공격 effect를 억제한 정도 |
 | `score.winner_side` | outcome display용 승패 주체. `RED`, `BLUE`, `DRAW` |
 | `score.winner_detail` | outcome display/학습 해석용 세부 결과. `BREACH`, `ATTRITION`, `PARTIAL_BREACH`, `DETECTION`, `RECOVERY`, `NO_EFFECT` 등 |
 | `score.outcome_reason` | 왜 해당 결과 라벨이 붙었는지 설명하는 짧은 reason code |

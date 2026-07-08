@@ -40,6 +40,37 @@ class ScorerTests(unittest.TestCase):
         self.assertEqual(score.winner_detail, "PARTIAL_BREACH")
         self.assertLessEqual(score.goal_reward, 0.30)
 
+    def test_policy_quarantine_prevents_small_telemetry_drift_breach(self):
+        attack = get_attack("TELEMETRY_FDI")
+        pre = create_baseline_state(seed=1)
+        post = create_baseline_state(seed=1)
+        pre["blue_observed"]["telemetry"]["battery_percent"] = 21.4
+        post["blue_observed"]["telemetry"]["battery_percent"] = 21.4
+        post["defense_runtime"]["observe_policy_gate"] = {
+            "algorithm": "zta_inspired_abac_radac_external_observe_v1",
+            "scope": "external_observe_only",
+            "by_domain": {
+                "telemetry": {
+                    "domain": "telemetry",
+                    "decision": "QUARANTINE",
+                    "allowed_use": "detection_only",
+                    "use_weight": 0.05,
+                    "trust_score": 0.45,
+                    "required_assurance": 0.75,
+                }
+            },
+            "decisions": [],
+        }
+
+        score = score_round(pre, post, attack, threats=[], actions=[])
+
+        self.assertTrue(score.attack_success)
+        self.assertTrue(score.goal_success)
+        self.assertFalse(score.detection_success)
+        self.assertEqual(score.winner, "DRAW")
+        self.assertEqual(score.winner_detail, "POLICY_CONTAINMENT")
+        self.assertGreaterEqual(score.containment_score, 0.45)
+
     def test_mission_recommended_area_counts_as_attack_effect(self):
         attack = get_attack("PRIORITY_POISONING")
         pre = create_baseline_state(seed=1)
