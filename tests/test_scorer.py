@@ -168,6 +168,32 @@ class ScorerTests(unittest.TestCase):
         self.assertTrue(score.detection_success)
         self.assertEqual(score.evidence["detection_window"], 2)
 
+    def test_score_semantics_separate_pre_goal_from_blue_recovery(self):
+        attack = get_attack("TELEMETRY_FDI")
+        pre = create_baseline_state(seed=1)
+        post = create_baseline_state(seed=1)
+        pre["blue_observed"]["telemetry"]["battery_percent"] = 82
+        pre["blue_observed"]["telemetry"]["motor_status"] = "OK"
+
+        class FakeThreat:
+            target = "telemetry"
+            confidence = 0.9
+
+        actions = [
+            DefenseAction("QUARANTINE_FIELD", "blue_observed.telemetry.battery_percent", 3, 1, 0.05),
+            DefenseAction("FALLBACK_TO_TRUSTED_STATE", "blue_observed.telemetry", 2, 1, 0.03),
+        ]
+        score = score_round(pre, post, attack, threats=[FakeThreat()], actions=actions)
+
+        self.assertTrue(score.attempted_effect_success)
+        self.assertTrue(score.pre_defense_goal_success)
+        self.assertTrue(score.blue_recovered)
+        self.assertFalse(score.post_defense_effective_breach)
+        self.assertEqual(
+            score.evidence["score_semantics"]["pre_defense_goal_success"],
+            score.pre_defense_goal_success,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

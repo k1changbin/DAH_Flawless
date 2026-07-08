@@ -30,7 +30,8 @@ def score_round(
     red_goal: dict | None = None,
 ) -> Score:
     evidence = _attack_evidence(pre_defense_state, attack)
-    attack_success = bool(evidence["mismatch"])
+    attempted_effect_success = bool(evidence["mismatch"])
+    attack_success = attempted_effect_success
     detection_success = _detected_in_window(attack, threats, threat_history)
     false_positive = (not attack_success) and bool(threats)
     current_recovery_success = _recovery_success(post_defense_state, attack)
@@ -55,6 +56,7 @@ def score_round(
         actions=actions,
     )
     goal_score = blend_goal_reward_with_mission_impact(goal_score, mission_impact)
+    pre_defense_goal_success = bool(goal_score.get("goal_success", False))
     containment = assess_defense_containment(
         pre_defense_state=pre_defense_state,
         post_defense_state=post_defense_state,
@@ -85,6 +87,16 @@ def score_round(
         goal_score=goal_score,
         containment=containment,
     )
+    blue_recovered = bool(recovery_success or containment.get("contained", False))
+    post_defense_effective_breach = bool(
+        attrition["triggered"]
+        or (
+            attempted_effect_success
+            and pre_defense_goal_success
+            and not blue_recovered
+            and float(containment.get("containment_score", 0.0)) < 0.55
+        )
+    )
 
     evidence["defense_actions"] = [action.action for action in actions]
     evidence["truth_model"] = "scorer_truth"
@@ -97,6 +109,18 @@ def score_round(
     evidence["containment"] = containment
     evidence["attrition"] = attrition
     evidence["outcome"] = outcome
+    evidence["score_semantics"] = {
+        "attempted_effect_success": attempted_effect_success,
+        "pre_defense_goal_success": pre_defense_goal_success,
+        "post_defense_effective_breach": post_defense_effective_breach,
+        "blue_recovered": blue_recovered,
+        "interpretation": {
+            "attempted_effect_success": "observe mutation created a scorer-visible mismatch",
+            "pre_defense_goal_success": "selected Red goal had an effect before Blue containment/recovery",
+            "post_defense_effective_breach": "meaningful Red effect remained after Blue response, including cost-effective attrition",
+            "blue_recovered": "Blue restored or contained the effect enough to suppress authoritative mission use",
+        },
+    }
     return Score(
         winner=outcome["winner"],
         attack_success=attack_success,
@@ -113,6 +137,10 @@ def score_round(
         winner_detail=outcome["winner_detail"],
         outcome_reason=outcome["reason"],
         containment_score=containment["containment_score"],
+        attempted_effect_success=attempted_effect_success,
+        pre_defense_goal_success=pre_defense_goal_success,
+        post_defense_effective_breach=post_defense_effective_breach,
+        blue_recovered=blue_recovered,
     )
 
 

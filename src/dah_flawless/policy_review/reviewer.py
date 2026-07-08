@@ -297,12 +297,25 @@ def _red_direction_score(before: dict, value: dict, context: dict) -> float:
     detected = bool(context.get("detected", False))
     weight_delta = float(value.get("weight", 0.0)) - float(before.get("weight", 0.0))
     probe_delta = float(value.get("telemetry_probe_delta", 0.0)) - float(before.get("telemetry_probe_delta", 0.0))
+    relative_advantage = context.get("relative_advantage")
+    if relative_advantage is not None:
+        relative_advantage = float(relative_advantage)
 
     score = 0.5
-    if detected and weight_delta <= 0:
-        score += 0.25
-    if (not detected) and weight_delta >= 0:
-        score += 0.25
+    if relative_advantage is not None:
+        if relative_advantage > 0.02 and weight_delta >= 0:
+            score += 0.3
+        elif relative_advantage < -0.02 and weight_delta <= 0:
+            score += 0.3
+        elif abs(relative_advantage) <= 0.02 and abs(weight_delta) <= 0.03:
+            score += 0.25
+        elif detected and weight_delta <= 0:
+            score += 0.1
+    else:
+        if detected and weight_delta <= 0:
+            score += 0.25
+        if (not detected) and weight_delta >= 0:
+            score += 0.25
     if probe_delta == 0:
         score += 0.1
     elif detected and probe_delta <= 0:
