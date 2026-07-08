@@ -1,0 +1,36 @@
+services:
+  dah:
+    build:
+      context: .
+    image: dah-flawless:local
+    command:
+      - python
+      - -m
+      - dah_flawless.main
+      - --seed
+      - "42"
+      - --rounds
+      - "5"
+      - --out
+      - data/logs/round_logs.jsonl
+      - --summary
+      - data/logs/summary.json
+    volumes:
+      - ./data:/app/data
+      - ./tmp:/app/tmp
+
+  dashboard:
+    build:
+      context: .
+    image: dah-flawless:local
+    command:
+      - streamlit
+      - run
+      - streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./tmp:/app/tmp

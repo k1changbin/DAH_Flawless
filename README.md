@@ -155,6 +155,32 @@ python -m unittest discover -s tests
 
 현재 기준으로 `150 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Blue Defense-Effect Contract, containment score, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, outcome label/reward shaping, attrition cost-effectiveness guard, Blue readiness gate, Blue episode availability budget reset, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, frontend combat replay log, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
 
+## Docker
+
+CLI 시뮬레이션:
+
+```bash
+docker build -t dah-flawless:local .
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/tmp:/app/tmp" dah-flawless:local
+```
+
+라운드 수를 바꾸려면:
+
+```bash
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/tmp:/app/tmp" dah-flawless:local \
+  python -m dah_flawless.main --seed 42 --rounds 100 \
+  --out data/logs/round_logs.jsonl --summary data/logs/summary.json
+```
+
+Compose:
+
+```bash
+docker compose run --rm dah
+docker compose up dashboard
+```
+
+대시보드는 `http://localhost:8501`에서 연다. 이미 생성된 `data/logs/round_logs.jsonl`을 읽거나 UI에서 짧은 시뮬레이션을 실행한다.
+
 ## 로그에서 볼 것
 
 | 필드 | 의미 |

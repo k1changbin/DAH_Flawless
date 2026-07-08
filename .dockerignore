@@ -1,0 +1,23 @@
+.git
+.agents
+.codex
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Generated simulation artifacts can become very large. Mount data/ at runtime
+# instead of baking prior logs into the image.
+data/logs/
+data/frontend/
+data/reports/
+tmp/
+
+# Local virtual environments and editor state.
+.venv/
+venv/
+env/
+.idea/
+.vscode/
