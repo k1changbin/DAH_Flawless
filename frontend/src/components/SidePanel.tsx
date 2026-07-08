@@ -108,21 +108,21 @@ function RedContent({ step, expanded }: { step: TimelineStep | null; expanded: b
             </ul>
           </section>
 
+          <section className="space-y-1.5">
+            <Label>Goal</Label>
+            <p className="font-mono text-xs text-text-hi">{round.outcome.goal_id}</p>
+            <div className="flex gap-4 font-mono text-[11px] text-text-mid">
+              <span>
+                reward <span className="text-text-hi">{round.outcome.goal_reward.toFixed(2)}</span>
+              </span>
+              <span className={round.outcome.goal_success ? "text-ok" : "text-text-low"}>
+                {round.outcome.goal_success ? "ACHIEVED" : "FAILED"}
+              </span>
+            </div>
+          </section>
+
           {expanded && (
             <>
-              <section className="space-y-1.5">
-                <Label>Goal</Label>
-                <p className="font-mono text-xs text-text-hi">{round.outcome.goal_id}</p>
-                <div className="flex gap-4 font-mono text-[11px] text-text-mid">
-                  <span>
-                    reward <span className="text-text-hi">{round.outcome.goal_reward.toFixed(2)}</span>
-                  </span>
-                  <span className={round.outcome.goal_success ? "text-ok" : "text-text-low"}>
-                    {round.outcome.goal_success ? "ACHIEVED" : "FAILED"}
-                  </span>
-                </div>
-              </section>
-
               <section className="space-y-1.5">
                 <Label>Applied Delta</Label>
                 <ul className="space-y-0.5">
