@@ -218,6 +218,17 @@ Defense object 형식:
 | `false_positive` | `bool` | true/false | `false` | 오탐 여부 |
 | `recovery_success` | `bool` | true/false | `true` | 복구 성공 여부 |
 | `winner` | enum string | `RED_BREACH`, `RED_ATTRITION`, `BLUE`, `BLUE_RECOVERY`, `DRAW` | `"RED_BREACH"` | 라운드 판정 |
+| `winner_side` | enum string | `RED`, `BLUE`, `DRAW` | `"RED"` | frontend/report display용 승패 주체 |
+| `winner_detail` | enum string | `BREACH`, `ATTRITION`, `PARTIAL_BREACH`, `DETECTION`, `RECOVERY`, `NO_EFFECT`, `FALSE_POSITIVE` | `"BREACH"` | outcome 세부 결과 |
+| `outcome_reason` | string | reason code | `"undetected_attack_achieved_selected_goal"` | 결과 라벨 부여 근거 |
+
+Attrition evidence extension:
+
+| field | type | range | example | description |
+|---|---|---|---|---|
+| `evidence.attrition.red_round_attack_cost` | ratio | 0.0~1.0 | `0.18` | Red simulated cost accumulated in the combat round |
+| `evidence.attrition.round_defense_cost` | ratio | 0.0~1.0 | `0.31` | Blue defense availability cost accumulated in the combat round |
+| `evidence.attrition.cost_effective` | bool | true/false | `true` | Whether Blue defense cost meaningfully exceeds Red cost |
 
 Red tactic object 형식:
 

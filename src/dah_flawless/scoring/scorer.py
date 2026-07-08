@@ -54,18 +54,24 @@ def score_round(
         actions=actions,
     )
     goal_score = blend_goal_reward_with_mission_impact(goal_score, mission_impact)
-    attrition = _attrition_evidence(pre_defense_state, post_defense_state, actions, goal_score)
+    attrition = _attrition_evidence(pre_defense_state, post_defense_state, actions, goal_score, mission_impact)
+    goal_score = _shape_goal_reward(
+        goal_score,
+        attack_success=attack_success,
+        detection_success=detection_success,
+        recovery_success=recovery_success,
+        attrition_triggered=bool(attrition["triggered"]),
+    )
 
-    if attack_success and not detection_success:
-        winner = "RED_BREACH"
-    elif attrition["triggered"]:
-        winner = "RED_ATTRITION"
-    elif recovery_success and availability >= RECOVERY_TARGET:
-        winner = "BLUE_RECOVERY"
-    elif detection_success and availability >= AVAIL_FLOOR:
-        winner = "BLUE"
-    else:
-        winner = "DRAW"
+    outcome = _classify_outcome(
+        attack_success=attack_success,
+        detection_success=detection_success,
+        false_positive=false_positive,
+        recovery_success=recovery_success,
+        availability=availability,
+        attrition=attrition,
+        goal_score=goal_score,
+    )
 
     evidence["defense_actions"] = [action.action for action in actions]
     evidence["truth_model"] = "scorer_truth"
@@ -76,8 +82,9 @@ def score_round(
     evidence["mission_impact"] = mission_impact
     evidence["goal_score"] = goal_score
     evidence["attrition"] = attrition
+    evidence["outcome"] = outcome
     return Score(
-        winner=winner,
+        winner=outcome["winner"],
         attack_success=attack_success,
         detection_success=detection_success,
         false_positive=false_positive,
@@ -88,6 +95,9 @@ def score_round(
         goal_id=goal_score["goal_id"],
         goal_success=goal_score["goal_success"],
         goal_reward=goal_score["goal_reward"],
+        winner_side=outcome["winner_side"],
+        winner_detail=outcome["winner_detail"],
+        outcome_reason=outcome["reason"],
     )
 
 
@@ -108,7 +118,12 @@ def _attack_evidence(state: dict, attack: Attack) -> dict:
     elif attack.target_domain == "mission":
         trusted = scorer_truth["mission"]["area_priority"]
         received = observed["mission"]["area_priority"]
-        mismatch = max(abs(trusted[area] - received[area]) for area in trusted) > 0.35
+        truth_top_area = max(trusted, key=lambda area: float(trusted[area]))
+        recommended_area = observed["mission"].get("recommended_area")
+        max_delta = max(abs(trusted[area] - received[area]) for area in trusted)
+        mismatch = max_delta > 0.35 or recommended_area not in {None, truth_top_area}
+        trusted = {"area_priority": trusted, "recommended_area": truth_top_area}
+        received = {"area_priority": received, "recommended_area": recommended_area}
     elif attack.target_domain == "command":
         trusted = {
             "expected_sequence_number": scorer_truth["command"]["expected_sequence_number"],
@@ -143,7 +158,12 @@ def _recovery_success(state: dict, attack: Attack) -> bool:
             and observed["telemetry"]["motor_status"] == scorer_truth["uav"]["motor_status"]
         )
     if attack.target_domain == "mission":
-        return observed["mission"]["area_priority"] == scorer_truth["mission"]["area_priority"]
+        truth_priority = scorer_truth["mission"]["area_priority"]
+        truth_top_area = max(truth_priority, key=lambda area: float(truth_priority[area]))
+        return (
+            observed["mission"]["area_priority"] == truth_priority
+            and observed["mission"].get("recommended_area") == truth_top_area
+        )
     if attack.target_domain == "command":
         return (
             observed["c2_message"]["sequence_number"] == scorer_truth["command"]["expected_sequence_number"]
@@ -181,6 +201,7 @@ def _attrition_evidence(
     post_defense_state: dict,
     actions: list[DefenseAction],
     goal_score: dict,
+    mission_impact: dict,
 ) -> dict:
     pre_availability = float(pre_defense_state["mission"]["availability"])
     post_availability = float(post_defense_state["mission"]["availability"])
@@ -191,21 +212,33 @@ def _attrition_evidence(
     round_defense_cost = float(combat_attrition.get("round_defense_cost", action_cost))
     round_defense_steps = int(combat_attrition.get("defense_steps", 1 if actions else 0))
     consecutive_defense_steps = int(combat_attrition.get("consecutive_defense_steps", 1 if actions else 0))
+    red_round_attack_cost = float(combat_attrition.get("red_round_attack_cost", 0.0))
+    red_mutation_steps = int(combat_attrition.get("red_mutation_steps", 0))
+    cost_ratio = round_defense_cost / max(red_round_attack_cost, 0.01)
+    net_defense_cost = max(0.0, round_defense_cost - red_round_attack_cost)
+    mission_impact_score = float(mission_impact.get("mission_impact_score", goal_score.get("mission_impact_score", 0.0)))
 
     floor_breach = post_availability < AVAIL_FLOOR
     already_below_floor = pre_availability < AVAIL_FLOOR
     current_pressure = action_cost >= 0.10 or availability_drop >= 0.08 or high_cost_action_count >= 2
     sustained_pressure = round_defense_steps >= 2 and round_defense_cost >= 0.16
     consecutive_pressure = consecutive_defense_steps >= 2 and round_defense_cost >= 0.12
+    cost_effective = net_defense_cost >= 0.06 and cost_ratio >= 1.20
+    mission_meaningful = (
+        mission_impact_score >= 0.35
+        or availability_drop >= 0.08
+        or post_availability <= AVAIL_FLOOR - 0.04
+    )
     goal_pressure = (
         goal_score.get("goal_id") == "BLUE_OVERDEFENSE_ATTRITION"
         and bool(goal_score.get("goal_success"))
+        and cost_effective
         and (action_cost >= 0.07 or availability_drop >= 0.04 or sustained_pressure)
     )
     stale_floor_pressure = already_below_floor and availability_drop < 0.03 and action_cost < 0.07
     triggered = floor_breach and not stale_floor_pressure and (
         current_pressure or sustained_pressure or consecutive_pressure or goal_pressure
-    )
+    ) and cost_effective and mission_meaningful
 
     return {
         "triggered": bool(triggered),
@@ -220,8 +253,91 @@ def _attrition_evidence(
         "round_defense_cost": round(round_defense_cost, 4),
         "round_defense_steps": round_defense_steps,
         "consecutive_defense_steps": consecutive_defense_steps,
+        "red_round_attack_cost": round(red_round_attack_cost, 4),
+        "red_mutation_steps": red_mutation_steps,
+        "defense_to_attack_cost_ratio": round(cost_ratio, 4),
+        "net_defense_cost": round(net_defense_cost, 4),
+        "mission_impact_score": round(mission_impact_score, 4),
+        "cost_effective": cost_effective,
+        "mission_meaningful": mission_meaningful,
         "current_pressure": current_pressure,
         "sustained_pressure": sustained_pressure,
         "goal_pressure": goal_pressure,
         "stale_floor_pressure": stale_floor_pressure,
     }
+
+
+def _classify_outcome(
+    *,
+    attack_success: bool,
+    detection_success: bool,
+    false_positive: bool,
+    recovery_success: bool,
+    availability: float,
+    attrition: dict,
+    goal_score: dict,
+) -> dict:
+    goal_success = bool(goal_score.get("goal_success", False))
+    if attrition["triggered"]:
+        return _outcome("RED_ATTRITION", "RED", "ATTRITION", "blue_defense_pressure_reduced_mission_availability")
+    if attack_success and goal_success and not detection_success:
+        return _outcome("RED_BREACH", "RED", "BREACH", "undetected_attack_achieved_selected_goal")
+    if attack_success and not detection_success:
+        return _outcome("DRAW", "DRAW", "PARTIAL_BREACH", "observe_corrupted_but_selected_goal_failed")
+    if false_positive:
+        return _outcome("DRAW", "DRAW", "FALSE_POSITIVE", "blue_flagged_threat_without_scorer_attack_effect")
+    if recovery_success and availability >= RECOVERY_TARGET:
+        return _outcome("BLUE_RECOVERY", "BLUE", "RECOVERY", "blue_detected_and_restored_trusted_observe")
+    if detection_success and availability >= AVAIL_FLOOR:
+        return _outcome("BLUE", "BLUE", "DETECTION", "blue_detected_or_contained_attack_effect")
+    if attack_success:
+        return _outcome("DRAW", "DRAW", "PARTIAL_EFFECT", "attack_effect_present_without_decisive_outcome")
+    return _outcome("DRAW", "DRAW", "NO_EFFECT", "selected_attack_did_not_create_decisive_effect")
+
+
+def _outcome(winner: str, side: str, detail: str, reason: str) -> dict:
+    return {
+        "winner": winner,
+        "winner_side": side,
+        "winner_detail": detail,
+        "reason": reason,
+    }
+
+
+def _shape_goal_reward(
+    goal_score: dict,
+    *,
+    attack_success: bool,
+    detection_success: bool,
+    recovery_success: bool,
+    attrition_triggered: bool,
+) -> dict:
+    updated = dict(goal_score)
+    before = float(updated.get("goal_reward", 0.0))
+    goal_success = bool(updated.get("goal_success", False))
+    caps: list[tuple[str, float]] = []
+
+    if not goal_success:
+        if attack_success and not detection_success:
+            caps.append(("partial_breach_goal_failed", 0.30))
+        elif attack_success:
+            caps.append(("partial_effect_goal_failed", 0.24))
+        else:
+            caps.append(("no_goal_effect", 0.18))
+    if recovery_success and not attrition_triggered:
+        caps.append(("blue_recovered_effect", 0.38))
+
+    after = before
+    if caps:
+        after = min(after, min(cap for _, cap in caps))
+    if goal_success and not detection_success:
+        after = min(1.0, after + 0.06)
+    if attrition_triggered and goal_success and updated.get("goal_id") == "BLUE_OVERDEFENSE_ATTRITION":
+        after = min(1.0, after + 0.08)
+
+    updated["goal_reward_before_outcome_shaping"] = round(before, 4)
+    updated["goal_reward"] = round(min(1.0, max(0.0, after)), 4)
+    updated["outcome_reward_adjustment"] = round(updated["goal_reward"] - before, 4)
+    updated["outcome_reward_caps"] = [{"reason": reason, "cap": cap} for reason, cap in caps]
+    updated["outcome_reward_algorithm"] = "outcome_reward_shaping_v1"
+    return updated

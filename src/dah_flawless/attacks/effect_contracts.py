@@ -54,7 +54,7 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "DETECTION_BOUNDARY_PROBE",
             "BLUE_OVERDEFENSE_ATTRITION",
         ),
-        supported_tactics=("mission_priority_shift",),
+        supported_tactics=("mission_priority_shift", "recommended_area_nudge", "mission_confidence_shaping"),
         mutation_paths=("mission.area_priority", "mission.recommended_area"),
         expected_tags=(
             "MISSION_PRIORITY_CHANGED",
@@ -98,7 +98,12 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "DETECTION_BOUNDARY_PROBE",
             "BLUE_OVERDEFENSE_ATTRITION",
         ),
-        supported_tactics=("telemetry_false_data", "boundary_probe"),
+        supported_tactics=(
+            "telemetry_false_data",
+            "boundary_probe",
+            "confidence_spoofing",
+            "internal_external_gap_shaping",
+        ),
         mutation_paths=("telemetry.battery_percent", "telemetry.motor_status"),
         expected_tags=(
             "TELEMETRY_CONFLICT",

@@ -189,7 +189,7 @@ class RedAgent:
         before = self._weights.get(attack_name, 0.0)
         before_probe_delta = self._telemetry_probe_delta
         goal_update = None
-        proposed_weight = max(1.0, before - 0.5) if detected else before + 0.5
+        proposed_weight = _proposed_attack_weight(before, detected=detected, score=score)
         proposed_probe_delta = before_probe_delta
         if attack_name == "TELEMETRY_FDI":
             if detected:
@@ -205,6 +205,9 @@ class RedAgent:
             context={
                 "attack_name": attack_name,
                 "detected": detected,
+                "goal_success": getattr(score, "goal_success", None) if score is not None else None,
+                "goal_reward": getattr(score, "goal_reward", None) if score is not None else None,
+                "winner_detail": getattr(score, "winner_detail", None) if score is not None else None,
                 "agent_family": "red_probe",
                 "stealth_mode": self._stealth_mode,
             },
@@ -267,6 +270,38 @@ def _tag_context(tags: list[str], tag_details: list[SituationTag] | None) -> dic
 
 def deepcopy_sorted_goal_stats(goal_stats: dict) -> dict:
     return {goal_id: dict(goal_stats[goal_id]) for goal_id in sorted(goal_stats)}
+
+
+def _proposed_attack_weight(before: float, *, detected: bool, score) -> float:
+    if score is None:
+        return max(1.0, before - 0.5) if detected else before + 0.5
+
+    goal_reward = float(getattr(score, "goal_reward", 0.0))
+    goal_success = bool(getattr(score, "goal_success", False))
+    winner_detail = getattr(score, "winner_detail", None)
+    winner = getattr(score, "winner", None)
+    attrition = getattr(score, "evidence", {}).get("attrition", {}) if score is not None else {}
+    attrition_cost_effective = bool(attrition.get("cost_effective", True))
+
+    delta = -0.20 if detected else 0.12
+    delta += 0.55 * (goal_reward - 0.45)
+    delta += 0.22 if goal_success else -0.22
+
+    if winner == "RED_BREACH":
+        delta += 0.18
+    elif winner == "RED_ATTRITION":
+        delta += 0.16 if attrition_cost_effective else -0.14
+    elif winner == "BLUE_RECOVERY":
+        delta -= 0.24
+    elif winner == "BLUE":
+        delta -= 0.12
+
+    if winner_detail == "PARTIAL_BREACH":
+        delta -= 0.18
+    elif winner_detail in {"NO_EFFECT", "FALSE_POSITIVE"}:
+        delta -= 0.12
+
+    return max(1.0, round(before + delta, 4))
 
 
 def _recent_tactics(previous_logs: list[dict], attack_name: str, window: int = 5) -> list[str]:

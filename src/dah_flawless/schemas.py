@@ -88,6 +88,9 @@ class Score:
     goal_id: str | None = None
     goal_success: bool = False
     goal_reward: float = 0.0
+    winner_side: str | None = None
+    winner_detail: str | None = None
+    outcome_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

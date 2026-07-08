@@ -90,7 +90,7 @@ GOAL_CATALOG: tuple[GoalSpec, ...] = (
         target_domain="mission",
         intended_effect="bias Blue toward the wrong mission area or target priority",
         preferred_attacks=("PRIORITY_POISONING",),
-        preferred_tactics=("mission_priority_shift",),
+        preferred_tactics=("mission_priority_shift", "recommended_area_nudge", "mission_confidence_shaping"),
         preferred_tags=("MISSION_PRIORITY_CHANGED", "METADATA_PLAINTEXT", "PAYLOAD_HIDDEN", "C2_ENCRYPTED"),
         cyber_effects=("mission_belief_poisoning", "target_priority_drift", "decision_support_pollution"),
         mission_impact=0.92,
@@ -103,7 +103,7 @@ GOAL_CATALOG: tuple[GoalSpec, ...] = (
         target_domain="telemetry",
         intended_effect="make external telemetry conflict with mission physics or internal trust anchors",
         preferred_attacks=("TELEMETRY_FDI",),
-        preferred_tactics=("telemetry_false_data", "boundary_probe"),
+        preferred_tactics=("telemetry_false_data", "boundary_probe", "confidence_spoofing", "internal_external_gap_shaping"),
         preferred_tags=("CROSS_CHECK_UNAVAILABLE", "GNSS_PRIMARY", "TELEMETRY_CONFLICT", "BATTERY_ENERGY_IMPOSSIBLE"),
         cyber_effects=("sensor_belief_drift", "cross_check_exhaustion", "telemetry_false_data"),
         mission_impact=0.86,
@@ -260,7 +260,7 @@ def update_goal_stats(goal_stats: dict | None, goal_id: str, score: Score, round
     reward = reward_from_score(score)
     stats[goal_id]["count"] = int(stats[goal_id]["count"]) + 1
     stats[goal_id]["reward_sum"] = round(float(stats[goal_id]["reward_sum"]) + reward, 4)
-    stats[goal_id]["success_count"] = int(stats[goal_id]["success_count"]) + int(bool(score.attack_success))
+    stats[goal_id]["success_count"] = int(stats[goal_id]["success_count"]) + int(bool(score.goal_success))
     stats[goal_id]["detected_count"] = int(stats[goal_id]["detected_count"]) + int(bool(score.detection_success))
     stats[goal_id]["last_round"] = round_number
     return stats, {
@@ -276,9 +276,14 @@ def reward_from_score(score: Score | dict) -> float:
     explicit_goal_reward = data.get("goal_reward")
     if explicit_goal_reward is None:
         explicit_goal_reward = data.get("evidence", {}).get("goal_score", {}).get("goal_reward")
+    goal_success = bool(data.get("goal_success", data.get("attack_success")))
     reward = 0.05
     if data.get("attack_success"):
         reward += 0.35
+    if goal_success:
+        reward += 0.20
+    elif data.get("attack_success"):
+        reward -= 0.18
     if not data.get("detection_success"):
         reward += 0.25
     else:
@@ -287,16 +292,23 @@ def reward_from_score(score: Score | dict) -> float:
         reward -= 0.10
 
     winner = data.get("winner")
+    winner_detail = data.get("winner_detail")
+    evidence = data.get("evidence", {})
+    attrition = evidence.get("attrition", {})
+    attrition_cost_effective = bool(attrition.get("cost_effective", True))
     if winner == "RED_BREACH":
         reward += 0.30
     elif winner == "RED_ATTRITION":
-        reward += 0.24
+        reward += 0.24 if attrition_cost_effective else -0.10
     elif winner == "BLUE_RECOVERY":
         reward -= 0.12
     elif winner == "BLUE":
         reward -= 0.06
+    if winner_detail == "PARTIAL_BREACH":
+        reward -= 0.14
+    elif winner_detail in {"FALSE_POSITIVE", "NO_EFFECT"}:
+        reward -= 0.08
 
-    evidence = data.get("evidence", {})
     defense_count = len(evidence.get("defense_actions", []) or [])
     reward += min(0.16, defense_count * 0.04)
     if explicit_goal_reward is not None:
@@ -320,7 +332,9 @@ def _merge_log_stats(goal_stats: dict[str, dict[str, float | int]], previous_log
         reward = reward_from_score(score)
         merged[goal_id]["count"] = int(merged[goal_id]["count"]) + 1
         merged[goal_id]["reward_sum"] = round(float(merged[goal_id]["reward_sum"]) + reward, 4)
-        merged[goal_id]["success_count"] = int(merged[goal_id]["success_count"]) + int(bool(score.get("attack_success")))
+        merged[goal_id]["success_count"] = int(merged[goal_id]["success_count"]) + int(
+            bool(score.get("goal_success", score.get("attack_success")))
+        )
         merged[goal_id]["detected_count"] = int(merged[goal_id]["detected_count"]) + int(bool(score.get("detection_success")))
         merged[goal_id]["last_round"] = int(entry.get("round", merged[goal_id]["last_round"]))
     return merged

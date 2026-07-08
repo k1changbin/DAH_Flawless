@@ -8,6 +8,8 @@ from math import log2
 
 def summarize_logs(logs: list[dict]) -> dict:
     winners = Counter(entry["score"]["winner"] for entry in logs)
+    winner_sides = Counter(_winner_side(entry["score"]) for entry in logs)
+    winner_details = Counter(_winner_detail(entry["score"]) for entry in logs)
     attacks = Counter(entry["attack"]["name"] for entry in logs)
     tactics = Counter((entry.get("red_tactic") or {}).get("strategy") or "UNKNOWN" for entry in logs)
     goals = Counter((entry.get("red_goal") or {}).get("goal_id") or entry["score"].get("goal_id") for entry in logs)
@@ -28,10 +30,19 @@ def summarize_logs(logs: list[dict]) -> dict:
     ]
     causal_failures = sum(1 for entry in logs if entry.get("causal_consistency", {}).get("status") == "FAIL")
     causal_warnings = sum(1 for entry in logs if entry.get("causal_consistency", {}).get("status") == "WARN")
+    attrition_records = [
+        entry["score"].get("evidence", {}).get("attrition", {})
+        for entry in logs
+        if entry["score"].get("winner") == "RED_ATTRITION"
+    ]
+    attrition_net_costs = [float(item.get("net_defense_cost", 0.0)) for item in attrition_records]
+    attrition_ratios = [float(item.get("defense_to_attack_cost_ratio", 0.0)) for item in attrition_records]
 
     return {
         "rounds": len(logs),
         "winners": dict(sorted(winners.items())),
+        "winner_sides": dict(sorted(winner_sides.items())),
+        "winner_details": dict(sorted(winner_details.items())),
         "attacks": dict(sorted(attacks.items())),
         "tactics": dict(sorted(tactics.items())),
         "attack_entropy": _entropy(attacks),
@@ -48,6 +59,12 @@ def summarize_logs(logs: list[dict]) -> dict:
         "causal_failure_count": causal_failures,
         "final_availability": availability[-1] if availability else None,
         "min_availability": min(availability) if availability else None,
+        "avg_attrition_net_defense_cost": round(sum(attrition_net_costs) / len(attrition_net_costs), 4)
+        if attrition_net_costs
+        else 0.0,
+        "avg_attrition_defense_to_attack_ratio": round(sum(attrition_ratios) / len(attrition_ratios), 4)
+        if attrition_ratios
+        else 0.0,
     }
 
 
@@ -56,3 +73,30 @@ def _entropy(counter: Counter) -> float:
     if total <= 0:
         return 0.0
     return round(-sum((count / total) * log2(count / total) for count in counter.values()), 4)
+
+
+def _winner_side(score: dict) -> str:
+    side = score.get("winner_side")
+    if side:
+        return str(side)
+    winner = score.get("winner", "")
+    if winner.startswith("RED"):
+        return "RED"
+    if winner.startswith("BLUE"):
+        return "BLUE"
+    if winner == "DRAW":
+        return "DRAW"
+    return "UNKNOWN"
+
+
+def _winner_detail(score: dict) -> str:
+    detail = score.get("winner_detail")
+    if detail:
+        return str(detail)
+    return {
+        "RED_BREACH": "BREACH",
+        "RED_ATTRITION": "ATTRITION",
+        "BLUE_RECOVERY": "RECOVERY",
+        "BLUE": "DETECTION",
+        "DRAW": "NO_DECISION",
+    }.get(score.get("winner"), "UNKNOWN")

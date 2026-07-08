@@ -503,17 +503,20 @@ Blue가 attack target domain에 대해 confidence threshold 이상 threat를 냈
 
 | winner | 의미 |
 |---|---|
-| `RED_BREACH` | 공격은 성공했고 Blue가 탐지하지 못함 |
+| `RED_BREACH` | 공격이 성공했고 Blue가 탐지하지 못했으며 selected goal도 성공함 |
 | `RED_ATTRITION` | 방어 비용 때문에 mission availability가 바닥남 |
 | `BLUE` | Blue가 탐지했고 availability도 유지됨 |
 | `BLUE_RECOVERY` | Blue가 탐지 후 신뢰 상태를 복구함 |
 | `DRAW` | 명확한 승패 없음 |
 
+호환용 `winner`와 별도로 `winner_side`, `winner_detail`, `outcome_reason`을 남긴다. 목표 실패 은밀 변조는 더 이상 `RED_BREACH`가 아니라 `DRAW` + `PARTIAL_BREACH` detail이다.
+
 판정 우선순위는 대체로 다음 흐름이다.
 
 ```text
-attack_success and not detection_success -> RED_BREACH
-availability < AVAIL_FLOOR -> RED_ATTRITION
+fresh/sustained defense pressure, availability floor breach, cost-effective net defense loss -> RED_ATTRITION
+attack_success and goal_success and not detection_success -> RED_BREACH
+attack_success and not detection_success and not goal_success -> DRAW / PARTIAL_BREACH
 recovery_success and availability >= RECOVERY_TARGET -> BLUE_RECOVERY
 detection_success and availability >= AVAIL_FLOOR -> BLUE
 else -> DRAW

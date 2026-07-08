@@ -230,6 +230,8 @@ def _apply_single_action(state: dict, action: DefenseAction, history: dict) -> N
         target = action.target.removeprefix("blue_observed.")
         fallback = _get_path(_trusted_restore_source(state, history), target)
         _set_path(state["blue_observed"], target, deepcopy(fallback))
+        if target == "mission.area_priority":
+            state["blue_observed"]["mission"]["recommended_area"] = _top_area(fallback)
     elif action.action == "HOLD_COMMAND":
         source = _trusted_command_source(state, history)
         state["blue_observed"]["c2_message"]["command"] = source["command"]
@@ -298,6 +300,10 @@ def _set_path(data: dict, path: str, value: Any) -> None:
     for part in parts[:-1]:
         cursor = cursor[part]
     cursor[parts[-1]] = value
+
+
+def _top_area(priorities: dict[str, float]) -> str:
+    return max(priorities, key=lambda area: float(priorities[area]))
 
 
 def _dedupe_actions(actions: list[DefenseAction]) -> list[DefenseAction]:

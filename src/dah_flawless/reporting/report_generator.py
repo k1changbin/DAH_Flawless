@@ -220,6 +220,8 @@ def _metrics(summary: dict) -> dict[str, Any]:
     )
     metrics = {key: summary.get(key) for key in keys if key in summary}
     metrics["winner_top"] = _top_item(summary.get("winners", {}))
+    metrics["winner_side_top"] = _top_item(summary.get("winner_sides", {}))
+    metrics["winner_detail_top"] = _top_item(summary.get("winner_details", {}))
     metrics["attack_top"] = _top_item(summary.get("attacks", {}))
     metrics["goal_top"] = _top_item(summary.get("goals", {}))
     return metrics
