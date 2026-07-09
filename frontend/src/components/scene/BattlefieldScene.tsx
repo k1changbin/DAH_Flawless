@@ -446,9 +446,10 @@ export function BattlefieldScene() {
 
   return (
     <Canvas
-      dpr={[1, 1.5]}
+      dpr={[1, 1]}
       camera={{ position: [5.5, 4.6, 7.5], fov: 42 }}
-      gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
+      gl={{ antialias: false, alpha: true, preserveDrawingBuffer: true, powerPreference: "high-performance" }}
+      performance={{ min: 0.5 }}
       style={{ background: "transparent" }}
     >
       <SceneContent />

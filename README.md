@@ -157,7 +157,15 @@ python -m unittest discover -s tests
 
 ## Docker
 
-CLI 시뮬레이션:
+### 대시보드 (권장, 심사용) — 최신 React 전투 리플레이 콘솔
+
+```bash
+docker compose up frontend
+```
+
+브라우저에서 `http://localhost:8080`을 연다. 랜딩(시작) 화면 → "시뮬레이션 진입" → 3D 전술 대시보드(RED/BLUE 패널, ZTA 정책, 타임라인 리플레이). 미리 빌드된 단일 파일 번들이라 Node·네트워크 없이 바로 뜬다.
+
+### CLI 시뮬레이션
 
 ```bash
 docker build -t dah-flawless:local .
@@ -175,11 +183,12 @@ docker run --rm -v "$PWD/data:/app/data" -v "$PWD/tmp:/app/tmp" dah-flawless:loc
 Compose:
 
 ```bash
-docker compose run --rm dah
-docker compose up dashboard
+docker compose run --rm dah            # CLI 시뮬레이션 1회
+docker compose up frontend             # 최신 대시보드 (localhost:8080)
+docker compose up dashboard            # 백업: Streamlit 콘솔 (localhost:8501, 라이브 재실행용)
 ```
 
-대시보드는 `http://localhost:8501`에서 연다. 이미 생성된 `data/logs/round_logs.jsonl`을 읽거나 UI에서 짧은 시뮬레이션을 실행한다.
+`frontend`는 미리 빌드된 리플레이 대시보드(seed 42, 6라운드)를 서빙한다. 커스텀 seed/라운드/시나리오로 **직접 다시 돌리려면** `dashboard`(Streamlit)에서 `data/logs/round_logs.jsonl`을 읽거나 UI에서 새 시뮬레이션을 실행한다.
 
 ## 로그에서 볼 것
 

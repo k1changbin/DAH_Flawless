@@ -16,8 +16,11 @@ COPY tests ./tests
 COPY docs ./docs
 COPY streamlit_app.py ./
 
+# Pre-built React dashboard (single-file bundle, served as static asset — no Node needed at runtime).
+COPY frontend/dist ./frontend/dist
+
 RUN mkdir -p data/logs data/frontend data/reports tmp/world
 
-EXPOSE 8501
+EXPOSE 8080 8501
 
 CMD ["python", "-m", "dah_flawless.main", "--seed", "42", "--rounds", "5", "--out", "data/logs/round_logs.jsonl", "--summary", "data/logs/summary.json"]

@@ -15,6 +15,10 @@ data/frontend/
 data/reports/
 tmp/
 
+# Frontend build inputs: only the pre-built dist/ is copied into the image.
+frontend/node_modules/
+frontend/tmp/
+
 # Local virtual environments and editor state.
 .venv/
 venv/

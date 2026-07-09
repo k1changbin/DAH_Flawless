@@ -3,7 +3,7 @@ import { CaretLeft, CaretRight, ShieldCheck, Crosshair } from "@phosphor-icons/r
 import { getRound, getStep } from "../data";
 import { useReplayStore } from "../store/useReplayStore";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import type { DefenseAction, TimelineStep, ZtaDecision } from "../types/replay";
+import type { DefenseAction, ReplayRound, TimelineStep, ZtaDecision } from "../types/replay";
 
 /** defense_actions는 문자열/객체 혼재 가능 (실데이터 검증됨) */
 export function defenseLabel(a: DefenseAction | string): string {
@@ -80,8 +80,7 @@ function Label({ children }: { children: React.ReactNode }) {
 
 /* ---------- RED 콘텐츠 ---------- */
 
-function RedContent({ step, expanded }: { step: TimelineStep | null; expanded: boolean }) {
-  const round = getRound(useReplayStore((s) => s.roundIdx));
+function RedContent({ step, expanded, round }: { step: TimelineStep | null; expanded: boolean; round: ReplayRound }) {
   const attack = round.attack;
 
   return (
@@ -210,8 +209,7 @@ function RedContent({ step, expanded }: { step: TimelineStep | null; expanded: b
 
 /* ---------- BLUE 콘텐츠 (blue_observed만 소비, truth 금지) ---------- */
 
-function BlueContent({ step, expanded }: { step: TimelineStep | null; expanded: boolean }) {
-  const round = getRound(useReplayStore((s) => s.roundIdx));
+function BlueContent({ step, expanded, round }: { step: TimelineStep | null; expanded: boolean; round: ReplayRound }) {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-3">
@@ -335,6 +333,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
   const step = getStep(roundIdx, stepIdx);
+  const round = getRound(roundIdx);
   const isCompact = useMediaQuery("(max-width: 1439px)");
   const isSheet = useMediaQuery("(max-width: 1023px)");
 
@@ -415,9 +414,9 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
             </button>
             <div className="min-h-0 flex-1">
               {isRed ? (
-                <RedContent step={step} expanded />
+                <RedContent step={step} expanded round={round} />
               ) : (
-                <BlueContent step={step} expanded />
+                <BlueContent step={step} expanded round={round} />
               )}
             </div>
           </div>
@@ -498,9 +497,9 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
                 </button>
                 <div className="min-h-0 flex-1">
                   {isRed ? (
-                    <RedContent step={step} expanded={isFocused} />
+                    <RedContent step={step} expanded={isFocused} round={round} />
                   ) : (
-                    <BlueContent step={step} expanded={isFocused} />
+                    <BlueContent step={step} expanded={isFocused} round={round} />
                   )}
                 </div>
               </motion.div>

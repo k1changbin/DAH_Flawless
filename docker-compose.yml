@@ -1,4 +1,22 @@
 services:
+  # Primary: latest React combat-replay dashboard (landing + 3D tactical scene).
+  # Self-contained single-file bundle; open http://localhost:8080 after `docker compose up frontend`.
+  frontend:
+    build:
+      context: .
+    image: dah-flawless:local
+    command:
+      - python
+      - -m
+      - http.server
+      - "8080"
+      - --directory
+      - frontend/dist
+      - --bind
+      - 0.0.0.0
+    ports:
+      - "8080:8080"
+
   dah:
     build:
       context: .
@@ -19,6 +37,8 @@ services:
       - ./data:/app/data
       - ./tmp:/app/tmp
 
+  # Backup: legacy Streamlit console for live re-runs with custom seed/rounds/scenario.
+  # Reads data/logs volume; open http://localhost:8501 after `docker compose up dashboard`.
   dashboard:
     build:
       context: .
