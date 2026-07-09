@@ -7,6 +7,7 @@ import { Satellites } from "./components/Satellites";
 import { TimelineLane } from "./components/TimelineLane";
 import { Mugyeol } from "./components/Mugyeol";
 import { Landing } from "./components/Landing";
+import { ResultsPage } from "./components/ResultsPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useReplayStore } from "./store/useReplayStore";
 
@@ -15,14 +16,23 @@ const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
 function Dashboard() {
   const playing = useReplayStore((s) => s.playing);
+  const playbackSpeed = useReplayStore((s) => s.playbackSpeed);
   const reduce = useReducedMotion();
 
   // 재생 틱
   useEffect(() => {
     if (!playing) return;
-    const id = setInterval(() => useReplayStore.getState().next(), PLAY_INTERVAL_MS);
+    const interval = Math.max(70, PLAY_INTERVAL_MS / Math.min(playbackSpeed, 8));
+    const id = setInterval(() => {
+      const store = useReplayStore.getState();
+      if (store.playbackSpeed >= 8) {
+        store.nextRound(Math.max(1, Math.floor(store.playbackSpeed / 8)));
+      } else {
+        store.next();
+      }
+    }, interval);
     return () => clearInterval(id);
-  }, [playing]);
+  }, [playing, playbackSpeed]);
 
   // 키보드: Space 재생, ←/→ 스텝, Esc 포커스 해제
   useEffect(() => {
@@ -96,21 +106,28 @@ function Dashboard() {
       <motion.div {...boot(0.4, { y: 16 })}>
         <TimelineLane />
       </motion.div>
-      <Mugyeol />
     </motion.div>
   );
 }
 
 export default function App() {
   const entered = useReplayStore((s) => s.entered);
+  const screen = useReplayStore((s) => s.screen);
 
   return (
     <ErrorBoundary>
       <div className="h-full">
         <div className="bg-battle-grid" aria-hidden />
         <AnimatePresence mode="wait">
-          {entered ? <Dashboard key="dashboard" /> : <Landing key="landing" />}
+          {!entered ? (
+            <Landing key="landing" />
+          ) : screen === "results" ? (
+            <ResultsPage key="results" />
+          ) : (
+            <Dashboard key="dashboard" />
+          )}
         </AnimatePresence>
+        {entered && <Mugyeol />}
       </div>
     </ErrorBoundary>
   );

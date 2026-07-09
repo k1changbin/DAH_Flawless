@@ -17,6 +17,8 @@ docker compose up frontend
 
 → 브라우저에서 **http://localhost:8080**
 
+브라우저로 연 뒤에는 `F11`을 눌러 전체 화면으로 보는 것을 권장한다.
+
 랜딩(시작) 화면 → **"시뮬레이션 진입"** → 3D 전술 대시보드가 뜬다.
 
 | 영역 | 내용 |
@@ -27,9 +29,35 @@ docker compose up frontend
 | 위성 창 | Suspicion 추이·ZTA 정책 히트맵·텔레메트리·이벤트 로그 |
 | 하단 | 스텝 타임라인 + 스크러버 |
 
-조작: `Space` 재생/정지, `←/→` 스텝 이동, `R1~R6` 라운드 전환. 종료는 `docker compose down`.
+조작: `Space` 재생/정지, `←/→` 스텝 이동, 상단 라운드 입력/타임라인으로 라운드 이동, 배속 버튼으로 긴 흐름 스캔, `결과보기`로 승패·공격 선택·정책 분포 요약 확인. 종료는 `docker compose down`.
 
-> 대시보드는 실제 백엔드 시뮬레이션 결과(seed 42, 6라운드)를 **재현 가능한 리플레이**로 시각화한다. 미리 빌드된 단일 HTML 번들이라 Node·네트워크 없이 오프라인에서도 뜬다. 커스텀 seed/라운드로 **직접 다시 돌리려면** 아래 백업 콘솔(Streamlit)을 쓴다.
+> 대시보드는 실제 백엔드 시뮬레이션 결과를 **재현 가능한 리플레이**로 시각화한다. `seed=42`, `clean_start`는 로컬에서 2000R까지 생성해 긴 학습 흐름을 볼 수 있고, 다른 seed/scenario는 가벼운 샘플 리플레이로 동작한다.
+
+---
+
+## 2000R 데이터 정책
+
+2000R 원본 로그는 약 700MB, 프론트용 JSON도 약 80MB라 Git에 올리지 않는다. 저장소에는 생성 스크립트만 두고, 데모 머신에서 필요할 때 같은 seed/scenario로 다시 뽑는다.
+
+```powershell
+$env:PYTHONPATH='src'
+python scripts/generate_2000_replay.py --rounds 2000 --seed 42 --scenario clean_start
+```
+
+생성 위치:
+
+- `data/logs/round_2000_logs.jsonl`
+- `data/logs/round_2000_summary.json`
+- `data/frontend/runs/seed42_clean_start_2000.json`
+
+새로 뽑은 뒤 프론트 번들과 Docker 서빙 파일을 갱신하려면:
+
+```powershell
+cd frontend
+npm run build
+cd ..
+docker compose up -d --build frontend
+```
 
 ---
 

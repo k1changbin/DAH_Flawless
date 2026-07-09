@@ -14,8 +14,9 @@ const LEGEND = [
 ] as const;
 
 export function CenterScene() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
-  const round = getRound(roundIdx);
+  const round = getRound(runId, roundIdx);
 
   return (
     <HudFrame

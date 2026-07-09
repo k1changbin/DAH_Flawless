@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Microphone, PaperPlaneRight, X } from "@phosphor-icons/react";
-import { replay, getRound } from "../data";
-import { useReplayStore } from "../store/useReplayStore";
+import { getReplay, getRound } from "../data";
+import { buildLearningProfile } from "../learning";
+import { PLAYBACK_SPEEDS, useReplayStore, type PlaybackSpeed } from "../store/useReplayStore";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
 /* ---------- Web Speech 최소 타입 ---------- */
@@ -58,23 +59,78 @@ interface DragState {
   startTop: number;
 }
 
-const QUICK_COMMANDS = ["3라운드 보여줘", "공격 뷰", "방어 뷰", "재생", "누가 이겼어"];
+const QUICK_COMMANDS = ["결과 보여줘", "16배속", "역전 지점", "블루 피크", "1500라운드"];
 
-const HELP_TEXT = "이렇게 말해보세요: N라운드 보여줘 / 공격 뷰 / 방어 뷰 / 재생 / 정지 / 다음 / 이전 / 누가 이겼어 / 정책 보여줘";
+const HELP_TEXT = "이렇게 말해보세요: N라운드 / 결과 보여줘 / 16배속 / 역전 지점 / 블루 피크 / 레드 피크 / 공격 뷰 / 방어 뷰 / 재생 / 정지";
 
 /** 명령 매칭. 응답 문장을 돌려준다(null = 매칭 실패). */
 function runCommand(text: string): string | null {
   const store = useReplayStore.getState();
   const t = text.trim().toLowerCase();
 
+  const setNearestSpeed = (wanted: number) => {
+    const speed = PLAYBACK_SPEEDS.reduce((best, item) =>
+      Math.abs(item - wanted) < Math.abs(best - wanted) ? item : best,
+    );
+    store.setPlaybackSpeed(speed as PlaybackSpeed);
+    return `${speed}배속으로 맞췄어요.`;
+  };
+
+  const speedMatch = t.match(/(\d+)\s*(?:x|배속|배)/);
+  if (speedMatch) {
+    return setNearestSpeed(Number(speedMatch[1]));
+  }
+  if (/(배속|고속|speed)/.test(t)) {
+    return setNearestSpeed(16);
+  }
+  if (/(빠르게|빨리|스킵|훑어|쭉)/.test(t)) {
+    return setNearestSpeed(Math.max(8, store.playbackSpeed * 2));
+  }
+  if (/(천천히|느리게|천천)/.test(t)) {
+    return setNearestSpeed(Math.max(1, Math.floor(store.playbackSpeed / 2)));
+  }
+  if (/(결과|분석|그래프|리포트|분포|통계|result|summary)/.test(t)) {
+    store.showResults();
+    return "결과 분석 페이지로 이동했어요.";
+  }
+  if (/(리플레이|전장|돌아가|돌아와)/.test(t)) {
+    store.showReplay();
+    return "리플레이 화면으로 돌아왔어요.";
+  }
+  if (/(역전|shift|전환)/.test(t)) {
+    const profile = buildLearningProfile(getReplay(store.runId), store.roundIdx, store.roundLimit);
+    if (profile.shiftIndex !== null) {
+      store.setRound(profile.shiftIndex);
+      return `역전 지점 R${profile.shiftIndex + 1}로 이동했어요.`;
+    }
+    return "아직 명확한 역전 지점을 찾지 못했어요.";
+  }
+  if (/(블루.*피크|blue.*peak|blue peak|블루 강세)/.test(t)) {
+    const profile = buildLearningProfile(getReplay(store.runId), store.roundIdx, store.roundLimit);
+    const peak = profile.windows.find((item) => item.label === "BLUE PEAK");
+    if (peak) {
+      store.setRound(peak.index);
+      return `블루 피크 R${peak.fromRound}로 이동했어요.`;
+    }
+  }
+  if (/(레드.*피크|red.*peak|red peak|레드 강세)/.test(t)) {
+    const profile = buildLearningProfile(getReplay(store.runId), store.roundIdx, store.roundLimit);
+    const peak = profile.windows.find((item) => item.label === "RED PEAK");
+    if (peak) {
+      store.setRound(peak.index);
+      return `레드 피크 R${peak.fromRound}로 이동했어요.`;
+    }
+  }
+
   const roundMatch = t.match(/(\d+)\s*라운드/);
   if (roundMatch) {
     const n = Number(roundMatch[1]);
-    if (n >= 1 && n <= replay.rounds.length) {
+    const activeReplay = getReplay(store.runId);
+    if (n >= 1 && n <= activeReplay.rounds.length) {
       store.setRound(n - 1);
       return `${n}라운드로 이동했어요.`;
     }
-    return `라운드는 1부터 ${replay.rounds.length}까지 있어요.`;
+    return `라운드는 1부터 ${activeReplay.rounds.length}까지 있어요.`;
   }
   if (/(공격|레드|red)/.test(t)) {
     store.setFocus("RED");
@@ -101,7 +157,7 @@ function runCommand(text: string): string | null {
     return "이전 스텝이에요.";
   }
   if (/(누가 이겼|승자|승패|결과)/.test(t)) {
-    const round = getRound(store.roundIdx);
+    const round = getRound(store.runId, store.roundIdx);
     const side =
       round.outcome.winner_side === "BLUE"
         ? "블루 방어팀"
@@ -307,10 +363,16 @@ export function Mugyeol() {
     if (!open) {
       recRef.current?.abort();
       stopAudioMeter();
-      if ("speechSynthesis" in window) speechSynthesis.cancel();
       setState("idle");
     }
   }, [open, stopAudioMeter]);
+
+  useEffect(() => {
+    return () => {
+      recRef.current?.abort();
+      stopAudioMeter();
+    };
+  }, [stopAudioMeter]);
 
   useEffect(() => {
     function onResize() {

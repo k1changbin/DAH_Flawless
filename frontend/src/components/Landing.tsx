@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowRight,
@@ -8,22 +8,16 @@ import {
   ShieldCheck,
   Waveform,
 } from "@phosphor-icons/react";
-import { replay } from "../data";
+import { getRun, SCENARIO_OPTIONS, SEED_OPTIONS, type ReplayScenarioId } from "../data";
+import { buildLearningProfile, MAX_LEARNING_ROUNDS } from "../learning";
 import { useReplayStore } from "../store/useReplayStore";
 
 const EASE = [0.23, 1, 0.32, 1] as const;
-
-const METRICS = [
-  { label: "ROUNDS", value: replay.rounds.length.toString(), tone: "text-hud-active" },
-  { label: "SEED", value: "42", tone: "text-warn" },
-  { label: "ZTA", value: "ON", tone: "text-ok" },
-];
 
 const SIDE_COPY = {
   RED: {
     icon: Crosshair,
     title: "RED OFFENSE",
-    body: "송출 텔레메트리는 관측만 가능하고, 수신 흐름은 기억 기반 혼동 자원으로 축적됩니다.",
     tone: "border-red-ops/55 bg-red-ops/10 text-red-ops",
     bar: "bg-red-ops",
     score: "FDI",
@@ -31,7 +25,6 @@ const SIDE_COPY = {
   BLUE: {
     icon: ShieldCheck,
     title: "BLUE DEFENSE",
-    body: "ZTA 정책과 내부 관측 anchor를 기준으로 명령 신뢰도와 복구 경로를 판별합니다.",
     tone: "border-blue-def/55 bg-blue-def/10 text-blue-def",
     bar: "bg-blue-def",
     score: "ZTA",
@@ -48,8 +41,29 @@ type Side = keyof typeof SIDE_COPY;
 
 export function Landing() {
   const enter = useReplayStore((s) => s.enter);
+  const runId = useReplayStore((s) => s.runId);
+  const seed = useReplayStore((s) => s.seed);
+  const scenario = useReplayStore((s) => s.scenario);
+  const roundLimit = useReplayStore((s) => s.roundLimit);
+  const setRunSelection = useReplayStore((s) => s.setRunSelection);
+  const setRoundLimit = useReplayStore((s) => s.setRoundLimit);
   const reduce = useReducedMotion();
   const [activeSide, setActiveSide] = useState<Side>("RED");
+  const [roundLimitText, setRoundLimitText] = useState(String(roundLimit));
+  const activeRun = getRun(runId);
+  const requestedLimit = Math.min(Math.max(roundLimit, 1), MAX_LEARNING_ROUNDS);
+  const learning = useMemo(() => buildLearningProfile(activeRun.replay, 0, roundLimit), [activeRun, roundLimit]);
+  const shiftRound =
+    learning.shiftIndex === null ? null : activeRun.replay.rounds[learning.shiftIndex];
+  const metrics = [
+    { label: "REQUESTED", value: requestedLimit.toString(), tone: "text-hud-active" },
+    { label: "LOADED", value: activeRun.replay.rounds.length.toString(), tone: "text-ok" },
+    { label: "SEED", value: String(activeRun.seed), tone: "text-warn" },
+  ];
+
+  useEffect(() => {
+    setRoundLimitText(String(roundLimit));
+  }, [roundLimit]);
 
   const introMotion = reduce
     ? {}
@@ -73,7 +87,7 @@ export function Landing() {
         <motion.section
           {...introMotion}
           className="landing-window relative grid w-full overflow-hidden border border-white/20 bg-white/[0.075] text-text-hi shadow-2xl backdrop-blur-2xl"
-          aria-label="DAH FLAWLESS 시작 화면"
+          aria-label="flawless 시작 화면"
         >
           <header className="relative z-10 flex min-h-12 items-center justify-between gap-4 border-b border-white/15 bg-black/20 px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
@@ -99,23 +113,142 @@ export function Landing() {
                   <Broadcast size={15} />
                   Drone autonomous replay
                 </p>
-                <h1 className="max-w-[8ch] font-display text-5xl font-bold leading-none text-white sm:text-6xl">
-                  DAH FLAWLESS
+                <h1 className="font-display text-5xl font-bold lowercase leading-none text-white sm:text-6xl">
+                  flawless
                 </h1>
-                <p className="mt-5 max-w-md text-base leading-7 text-text-hi/86">
-                  레드의 관측 흐름과 블루의 신뢰 판별을 하나의 전장 콘솔에서 재생합니다.
-                  송출값은 관측 전용 신호로 잠그고, 수신값은 기억 기반 혼동 자원으로 추적합니다.
+                <p className="mt-4 max-w-lg text-sm leading-6 text-text-hi/88">
+                  Seed, Scenario, Rounds를 정하면 최대 2000R 안에서 Red의 관측 신뢰 교란과
+                  Blue의 anchor/ZTA 대응이 라운드별 승패, 역전 구간, 정책 분포로 어떻게 바뀌는지
+                  압축해서 보여줍니다.
+                </p>
+              </div>
+
+              <div className="grid gap-2 border border-white/12 bg-black/24 p-3 text-xs leading-5 text-text-mid backdrop-blur-md">
+                <p className="font-display text-[10px] font-semibold uppercase tracking-[0.12em] text-hud-active">
+                  How to read this replay
+                </p>
+                <p>
+                  같은 Seed는 같은 흐름을 재현하고, Scenario는 SATCOM 지연이나 텔레메트리 충돌 같은
+                  출발 조건을 바꿉니다. Rounds에는 보고 싶은 상한을 입력한 뒤 진입하고, 상단 배속과
+                  결과보기로 긴 학습 흐름을 빠르게 훑습니다.
                 </p>
               </div>
 
               <div className="space-y-5">
                 <div className="grid grid-cols-3 gap-2">
-                  {METRICS.map((m) => (
+                  {metrics.map((m) => (
                     <div key={m.label} className="border border-white/12 bg-black/24 px-3 py-3 backdrop-blur-md">
                       <p className="font-mono text-[10px] uppercase text-text-low">{m.label}</p>
                       <p className={`mt-1 font-display text-xl font-bold ${m.tone}`}>{m.value}</p>
                     </div>
                   ))}
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="grid gap-1 border border-white/12 bg-black/24 px-3 py-2 backdrop-blur-md">
+                    <span className="font-mono text-[10px] uppercase text-text-low">Seed</span>
+                    <select
+                      value={seed}
+                      onChange={(e) => setRunSelection(Number(e.target.value), scenario)}
+                      className="h-9 border border-white/12 bg-surface-0 px-2 font-display text-sm font-semibold uppercase text-text-hi outline-none transition-colors hover:border-hud-active focus:border-hud-active"
+                    >
+                      {SEED_OPTIONS.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="grid gap-1 border border-white/12 bg-black/24 px-3 py-2 backdrop-blur-md">
+                    <span className="font-mono text-[10px] uppercase text-text-low">Scenario</span>
+                    <select
+                      value={scenario}
+                      onChange={(e) => setRunSelection(seed, e.target.value as ReplayScenarioId)}
+                      className="h-9 border border-white/12 bg-surface-0 px-2 font-display text-sm font-semibold uppercase text-text-hi outline-none transition-colors hover:border-hud-active focus:border-hud-active"
+                    >
+                      {SCENARIO_OPTIONS.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="min-h-8 text-[11px] leading-4 text-text-mid">{activeRun.scenarioDescription}</p>
+                  </label>
+
+                  <label className="grid gap-1 border border-white/12 bg-black/24 px-3 py-2 backdrop-blur-md sm:col-span-2">
+                    <span className="font-mono text-[10px] uppercase text-text-low">
+                      Requested rounds · max {MAX_LEARNING_ROUNDS} · loaded detail {activeRun.replay.rounds.length}
+                    </span>
+                    <input
+                      value={roundLimitText}
+                      onChange={(event) => setRoundLimitText(event.target.value)}
+                      onBlur={() => {
+                        const next = Number(roundLimitText);
+                        if (Number.isFinite(next)) setRoundLimit(next);
+                        else setRoundLimitText(String(roundLimit));
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          const next = Number(roundLimitText);
+                          if (Number.isFinite(next)) setRoundLimit(next);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      inputMode="numeric"
+                      aria-label="표시 라운드 수"
+                      className="h-9 border border-white/12 bg-surface-0 px-2 font-display text-sm font-semibold uppercase text-text-hi outline-none transition-colors hover:border-hud-active focus:border-hud-active"
+                    />
+                  </label>
+                </div>
+
+                <div className="border border-white/12 bg-black/24 p-3 backdrop-blur-md">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-display text-[10px] font-semibold uppercase tracking-[0.12em] text-text-low">
+                        Learning arc
+                      </p>
+                      <p className="font-mono text-[10px] text-text-mid">
+                        {learning.markerCount} snapshots · {learning.visibleRounds} detail / {requestedLimit} requested
+                      </p>
+                    </div>
+                    <div className="text-right font-mono text-[10px] text-text-low">
+                      <p>
+                        BLUE <span className="text-blue-def">{learning.winnerCounts.BLUE}</span>
+                      </p>
+                      <p>
+                        RED <span className="text-red-ops">{learning.winnerCounts.RED}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mb-2 flex h-5 items-end gap-px overflow-hidden border border-white/10 bg-surface-0 px-1 py-1">
+                    {learning.bins.map((bin) => (
+                      <div
+                        key={`${bin.fromRound}-${bin.toRound}`}
+                        className={
+                          bin.dominant === "BLUE"
+                            ? "min-w-0 flex-1 bg-blue-def"
+                            : bin.dominant === "RED"
+                              ? "min-w-0 flex-1 bg-red-ops"
+                              : "min-w-0 flex-1 bg-text-low"
+                        }
+                        style={{
+                          height: `${35 + Math.abs(bin.score) * 65}%`,
+                          opacity: 0.24 + Math.max(bin.blueRate, bin.redRate, bin.drawRate) * 0.58,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between gap-3 font-mono text-[10px] text-text-low">
+                    <span>
+                      {learning.firstBlueIndex === null
+                        ? "first BLUE pending"
+                        : `first BLUE R${activeRun.replay.rounds[learning.firstBlueIndex].round}`}
+                    </span>
+                    <span className="text-right">
+                      {shiftRound ? `shift R${shiftRound.round} · ${shiftRound.attack.target_domain}` : "shift pending"}
+                    </span>
+                  </div>
                 </div>
 
                 <button
@@ -139,14 +272,14 @@ export function Landing() {
                 <div className="relative z-10 grid h-full grid-rows-[1fr_auto]">
                   <div className="grid gap-3 p-4 sm:grid-cols-[1fr_230px] sm:p-5">
                     <div className="flex min-h-[260px] flex-col justify-between">
-                      <div className="max-w-xs">
+                      <div className="max-w-[24rem]">
                         <p className="font-display text-[11px] font-semibold uppercase text-text-low">
-                          Mission telemetry split
+                          Observe-integrity replay
                         </p>
-                        <p className="mt-2 text-2xl font-semibold leading-tight text-white">
-                          월드값 기반 송출/수신 흐름을
-                          <br />
-                          분리해서 보여줍니다.
+                        <p className="mt-2 text-[1.45rem] font-semibold leading-snug text-white [word-break:keep-all] sm:text-2xl">
+                          <span className="block">관측 신뢰가 흔들릴 때</span>
+                          <span className="block">판단 흐름이 어떻게 바뀌는지</span>
+                          <span className="block">라운드로 압축합니다.</span>
                         </p>
                       </div>
 
@@ -185,7 +318,11 @@ export function Landing() {
                               </span>
                               <span className="font-mono text-[10px]">{item.score}</span>
                             </div>
-                            <p className="mt-3 text-xs leading-5 text-text-hi/80">{item.body}</p>
+                            <p className="mt-3 text-xs leading-5 text-text-hi/80">
+                              {side === "RED"
+                                ? "외부 관측면에서 신뢰를 흔드는 공격 선택, 변조 경로, 라운드별 성과를 추적합니다."
+                                : "내부 anchor와 ZTA 정책을 기준으로 관측값을 제한, 격리, 복구한 판단 흐름을 압축합니다."}
+                            </p>
                             <div className="mt-3 h-1 bg-white/12">
                               <div className={`h-full ${item.bar}`} style={{ width: active ? "76%" : "42%" }} />
                             </div>

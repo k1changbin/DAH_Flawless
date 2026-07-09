@@ -27,10 +27,11 @@ function decisionBg(decision: ZtaDecision): string {
 /* ---------- 1. Suspicion 스파크라인 ---------- */
 
 function SuspicionSparkline() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
-  const round = getRound(roundIdx);
-  const step = getStep(roundIdx, stepIdx);
+  const round = getRound(runId, roundIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
 
   const W = 208;
   const H = 44;
@@ -68,10 +69,11 @@ function SuspicionSparkline() {
 /* ---------- 2. ZTA 정책 타임라인 ---------- */
 
 function ZtaPolicyLane() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
   const setStep = useReplayStore((s) => s.setStep);
-  const round = getRound(roundIdx);
+  const round = getRound(runId, roundIdx);
 
   return (
     <HudFrame title="ZTA Policy" accent="cyan" className="w-60">
@@ -109,9 +111,10 @@ function ZtaPolicyLane() {
 /* ---------- 3. 텔레메트리 피드 ---------- */
 
 function TelemetryFeed() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
-  const step = getStep(roundIdx, stepIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
 
   if (!step) return null;
 
@@ -148,10 +151,11 @@ interface LogEvent {
 }
 
 function EventLog() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
-  const round = getRound(roundIdx);
-  const step = getStep(roundIdx, stepIdx);
+  const round = getRound(runId, roundIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
   const attacking = step !== null && step.red_action !== "WAIT" && step.red_action !== "ABORT";
   const deny = Boolean(step?.zta.some((z) => z.decision === "DENY"));
 
@@ -191,10 +195,11 @@ function EventLog() {
 }
 
 function CompactOverlay() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
-  const round = getRound(roundIdx);
-  const step = getStep(roundIdx, stepIdx);
+  const round = getRound(runId, roundIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
   if (!step) return null;
 
   const restricted = step.zta.filter((z) => z.restrictive);

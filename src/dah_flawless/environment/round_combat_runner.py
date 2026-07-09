@@ -222,6 +222,7 @@ class RoundCombatRunner:
         summary.update(
             {
                 "runner": "RoundCombatRunner",
+                "seed": self.seed,
                 "rounds": self.rounds,
                 "max_steps": self.max_steps,
                 "min_steps": self.min_steps,

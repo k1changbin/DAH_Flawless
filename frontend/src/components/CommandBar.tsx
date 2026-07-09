@@ -1,7 +1,8 @@
-import { Pause, Play, SignOut, SkipBack, SkipForward } from "@phosphor-icons/react";
-import { replay, getRound, getStep } from "../data";
-import { useReplayStore } from "../store/useReplayStore";
+import { ChartBar, Pause, Play, SignOut, SkipBack, SkipForward } from "@phosphor-icons/react";
+import { getRound, getRun, getStep } from "../data";
+import { PLAYBACK_SPEEDS, useReplayStore, type PlaybackSpeed } from "../store/useReplayStore";
 import type { WinnerSide } from "../types/replay";
+import { LearningPath } from "./LearningPath";
 
 const WINNER_STYLE: Record<WinnerSide, string> = {
   BLUE: "border-blue-def text-blue-def",
@@ -10,22 +11,27 @@ const WINNER_STYLE: Record<WinnerSide, string> = {
 };
 
 export function CommandBar() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
   const playing = useReplayStore((s) => s.playing);
+  const playbackSpeed = useReplayStore((s) => s.playbackSpeed);
   const setRound = useReplayStore((s) => s.setRound);
+  const setPlaybackSpeed = useReplayStore((s) => s.setPlaybackSpeed);
   const togglePlay = useReplayStore((s) => s.togglePlay);
   const next = useReplayStore((s) => s.next);
   const prev = useReplayStore((s) => s.prev);
+  const showResults = useReplayStore((s) => s.showResults);
   const exitToLanding = useReplayStore((s) => s.exitToLanding);
 
-  const round = getRound(roundIdx);
-  const step = getStep(roundIdx, stepIdx);
+  const activeRun = getRun(runId);
+  const round = getRound(runId, roundIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
   const total = round.timeline.length;
   const side = round.outcome.winner_side;
 
   return (
-    <header className="dashboard-bar relative z-10 flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-white/14 px-4 py-2 backdrop-blur-md lg:flex-nowrap lg:gap-4 lg:py-0 max-[1023px]:px-2">
+    <header className="dashboard-bar relative z-10 flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-white/14 px-4 py-2 backdrop-blur-md lg:flex-nowrap lg:gap-3 lg:py-0 max-[1023px]:px-2">
       <button
         onClick={exitToLanding}
         className="flex min-w-fit items-baseline gap-2 transition-opacity hover:opacity-80 active:scale-[0.98]"
@@ -33,29 +39,17 @@ export function CommandBar() {
         title="랜딩 페이지로 돌아가기"
       >
         <span className="font-display text-base font-bold tracking-[0.06em] text-text-hi">
-          DAH FLAWLESS
+          flawless
         </span>
         <span className="font-display text-[10px] font-semibold uppercase tracking-[0.14em] text-text-low max-[1023px]:hidden">
           Combat Replay
         </span>
+        <span className="font-mono text-[10px] uppercase text-text-low max-[1180px]:hidden">
+          S{activeRun.seed} / {activeRun.scenarioLabel}
+        </span>
       </button>
 
-      <nav aria-label="라운드 선택" className="flex max-w-[42vw] items-center gap-1 overflow-x-auto lg:max-w-none">
-        {replay.rounds.map((r, i) => (
-          <button
-            key={r.round}
-            onClick={() => setRound(i)}
-            aria-pressed={i === roundIdx}
-            className={`h-8 min-w-9 px-2 font-mono text-xs transition-colors ${
-              i === roundIdx
-                ? "border border-hud-active bg-hud-active/14 text-hud-active shadow-[0_0_18px_rgba(95,212,245,0.16)]"
-                : "border border-transparent text-text-mid hover:border-white/18 hover:bg-white/8 hover:text-text-hi"
-            }`}
-          >
-            R{r.round}
-          </button>
-        ))}
-      </nav>
+      <LearningPath runId={runId} roundIdx={roundIdx} onSelectRound={setRound} />
 
       <div className="flex items-center gap-1">
         <button
@@ -81,6 +75,31 @@ export function CommandBar() {
         </button>
       </div>
 
+      <div className="flex h-8 items-center border border-white/12 bg-surface-0/70">
+        {PLAYBACK_SPEEDS.map((speed) => (
+          <button
+            key={speed}
+            onClick={() => setPlaybackSpeed(speed as PlaybackSpeed)}
+            aria-pressed={playbackSpeed === speed}
+            className={`h-full px-2 font-mono text-[10px] transition-colors active:scale-[0.96] ${
+              playbackSpeed === speed
+                ? "bg-hud-active text-surface-0"
+                : "text-text-low hover:bg-white/8 hover:text-text-hi"
+            }`}
+          >
+            {speed}x
+          </button>
+        ))}
+      </div>
+
+      <button
+        onClick={showResults}
+        className="flex h-8 items-center gap-1.5 border border-hud-active/45 bg-hud-active/10 px-2.5 font-display text-[10px] font-semibold uppercase tracking-[0.1em] text-hud-active transition-colors hover:border-hud-active hover:bg-hud-active/18 active:scale-[0.97]"
+      >
+        <ChartBar size={14} />
+        결과보기
+      </button>
+
       <div className="font-mono text-xs text-text-mid max-[1023px]:order-5 max-[1023px]:w-full">
         STEP{" "}
         <span className="text-base text-text-hi">
@@ -89,8 +108,6 @@ export function CommandBar() {
         <span className="text-text-low"> / {String(total).padStart(2, "0")}</span>
         {step && <span className="ml-3 uppercase text-text-low">{step.phase}</span>}
       </div>
-
-      <div className="flex-1" />
 
       <div
         className={`hud-clip border px-3 py-1.5 font-display text-xs font-semibold uppercase tracking-[0.08em] ${WINNER_STYLE[side]}`}

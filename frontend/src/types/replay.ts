@@ -138,6 +138,8 @@ export interface ActionRun {
 
 export interface ReplayRound {
   round: number;
+  scenario?: string;
+  scenario_profile?: Record<string, unknown>;
   title: string;
   attack: RoundAttack;
   outcome: RoundOutcome;

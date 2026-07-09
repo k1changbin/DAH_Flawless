@@ -330,10 +330,11 @@ function BlueContent({ step, expanded, round }: { step: TimelineStep | null; exp
 export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
   const focus = useReplayStore((s) => s.focus);
   const toggleFocus = useReplayStore((s) => s.toggleFocus);
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
-  const step = getStep(roundIdx, stepIdx);
-  const round = getRound(roundIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
+  const round = getRound(runId, roundIdx);
   const isCompact = useMediaQuery("(max-width: 1439px)");
   const isSheet = useMediaQuery("(max-width: 1023px)");
 

@@ -37,6 +37,17 @@ outputs/
 reports/
 *.zip
 data/
+!data/
+data/*
+!data/frontend/
+data/frontend/*
+!data/frontend/combat_replay.json
+!data/frontend/runs/
+data/frontend/runs/*
+!data/frontend/runs/*.json
+# Large local replay artifacts; regenerate with scripts/generate_2000_replay.py.
+data/frontend/runs/*_2000.json
+data/logs/*2000*
 tmp/
 !tmp/.gitkeep
 tmp/world/

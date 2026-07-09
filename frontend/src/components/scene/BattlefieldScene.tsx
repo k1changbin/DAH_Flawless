@@ -40,10 +40,11 @@ const REDUCED_MOTION =
 
 /** 현재 스텝에서 각 도메인 링크의 상태 */
 function useLinkStates() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
-  const round = getRound(roundIdx);
-  const step = getStep(roundIdx, stepIdx);
+  const round = getRound(runId, roundIdx);
+  const step = getStep(runId, roundIdx, stepIdx);
 
   return useMemo(() => {
     const states: Record<ZtaDomain, { attack: boolean; restricted: boolean }> = {

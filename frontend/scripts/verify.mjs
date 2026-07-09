@@ -39,7 +39,13 @@ if (!args.includes("--landing")) {
 
 const roundArg = argValue("--round");
 if (roundArg) {
-  await page.click(`text=R${roundArg}`);
+  const roundInput = page.getByLabel("라운드 직접 이동");
+  if ((await roundInput.count()) > 0) {
+    await roundInput.fill(String(roundArg));
+    await roundInput.press("Enter");
+  } else {
+    await page.click(`text=R${roundArg}`);
+  }
   await page.waitForTimeout(400);
 }
 

@@ -19,11 +19,12 @@ function stepEventDots(s: TimelineStep) {
 }
 
 export function TimelineLane() {
+  const runId = useReplayStore((s) => s.runId);
   const roundIdx = useReplayStore((s) => s.roundIdx);
   const stepIdx = useReplayStore((s) => s.stepIdx);
   const setStep = useReplayStore((s) => s.setStep);
 
-  const round = getRound(roundIdx);
+  const round = getRound(runId, roundIdx);
   const timeline = round.timeline;
   const highlight = round.highlights.find((h) => h.step === timeline[stepIdx]?.step);
 

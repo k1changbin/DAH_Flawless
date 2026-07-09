@@ -29,6 +29,9 @@ def build_frontend_combat_log(logs: list[dict], summary: dict | None = None) -> 
         "source": {
             "runner": summary.get("runner") or _first_value(logs, "runner"),
             "rounds": len(logs),
+            "seed": summary.get("seed") or _first_value(logs, "seed"),
+            "scenario": summary.get("scenario") or _first_value(logs, "scenario"),
+            "scenario_profile": summary.get("scenario_profile") or _first_value(logs, "scenario_profile"),
             "training_log_preserved": True,
             "note": "Derived projection. Use the JSONL training log for learning, audit, and hash-chain checks.",
         },
@@ -52,6 +55,9 @@ def _summary_view(rounds: list[dict], summary: dict) -> dict[str, Any]:
     winner_details = Counter(item["outcome"]["winner_detail"] for item in rounds)
     return {
         "rounds": len(rounds),
+        "seed": summary.get("seed"),
+        "scenario": summary.get("scenario"),
+        "scenario_profile": summary.get("scenario_profile", {}),
         "winner_sides": dict(sorted(winner_sides.items())),
         "winner_details": dict(sorted(winner_details.items())),
         "winners_raw": summary.get("winners", _count_outcomes(rounds, "winner")),
@@ -88,6 +94,8 @@ def _round_view(entry: dict) -> dict[str, Any]:
     timeline = [_step_view(step) for step in entry.get("combat_steps", [])]
     return {
         "round": entry.get("round"),
+        "scenario": entry.get("scenario"),
+        "scenario_profile": entry.get("scenario_profile", {}),
         "title": _round_title(entry, outcome),
         "step_count": entry.get("step_count", len(timeline)),
         "attack": {
