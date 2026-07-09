@@ -6,7 +6,7 @@ from copy import deepcopy
 
 from dah_flawless.blue.feedback_learner import default_blue_policy_state
 from dah_flawless.config import BASE_TIMESTAMP, DEFAULT_SCENARIO, SCENARIOS
-from dah_flawless.observation import build_blue_observed
+from dah_flawless.observation import build_blue_observed, refresh_telemetry_channels
 
 
 def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
@@ -172,6 +172,7 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
         capabilities=capabilities,
         blue_policy=blue_policy,
     )
+    refresh_telemetry_channels(blue_observed)
 
     return {
         "round": 0,
@@ -197,8 +198,11 @@ def create_baseline_state(seed: int, scenario: str = DEFAULT_SCENARIO) -> dict:
             "effect_threshold": deepcopy(blue_policy["effect_threshold"]),
             "effect_mission_impact_ema": deepcopy(blue_policy["effect_mission_impact_ema"]),
             "effect_mission_impact_counts": deepcopy(blue_policy["effect_mission_impact_counts"]),
+            "telemetry_axis_sensitivity": deepcopy(blue_policy["telemetry_axis_sensitivity"]),
+            "telemetry_axis_threshold": deepcopy(blue_policy["telemetry_axis_threshold"]),
             "feedback_counts": deepcopy(blue_policy["feedback_counts"]),
             "effect_feedback_counts": deepcopy(blue_policy["effect_feedback_counts"]),
+            "telemetry_axis_feedback_counts": deepcopy(blue_policy["telemetry_axis_feedback_counts"]),
         },
         "last_known_good": deepcopy(blue_observed),
     }
@@ -212,6 +216,7 @@ def make_history(state: dict) -> dict:
         "last_received_timestamp": obs["time"]["received_timestamp"],
         "last_area_priority": deepcopy(obs["mission"]["area_priority"]),
         "last_telemetry": deepcopy(obs["telemetry"]),
+        "last_telemetry_channels": deepcopy(obs.get("telemetry_channels", {})),
         "last_navigation": deepcopy(obs["navigation"]),
         "last_command": obs["c2_message"]["command"],
     }

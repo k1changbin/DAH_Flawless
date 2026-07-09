@@ -372,7 +372,12 @@ def _policy_decisions(outcome: Any) -> list[dict]:
 
 def _is_forbidden_path(path: str) -> bool:
     normalized = _normalize_observe_path(path)
-    return normalized.startswith("internal_observe.") or normalized.startswith("state.world.") or normalized.startswith("raw_world.")
+    return (
+        normalized.startswith("internal_observe.")
+        or normalized.startswith("state.world.")
+        or normalized.startswith("raw_world.")
+        or normalized.startswith("telemetry_channels.")
+    )
 
 
 def _is_forbidden_true_transition(path: str, before_observe: dict, proposed_observe: dict) -> bool:

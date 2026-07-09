@@ -104,20 +104,40 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "confidence_spoofing",
             "internal_external_gap_shaping",
         ),
-        mutation_paths=("telemetry.battery_percent", "telemetry.motor_status"),
+        mutation_paths=(
+            "c2_message.command",
+            "c2_message.ack.sequence_number",
+            "c2_message.ack.status",
+            "comms.latency_ms",
+            "comms.packet_interval_jitter_ms",
+            "comms.ack_delay_ms",
+        ),
         expected_tags=(
-            "TELEMETRY_CONFLICT",
-            "BATTERY_MOTOR_INCONSISTENT",
-            "BATTERY_ENERGY_IMPOSSIBLE",
-            "IMU_TELEMETRY_DIVERGENCE",
             "CROSS_CHECK_UNAVAILABLE",
             "GNSS_PRIMARY",
+            "ACK_CHANNEL_VISIBLE",
+            "ACK_TIMING_ANOMALY",
+            "PACKET_INTERVAL_ANOMALY",
+            "HIGH_LATENCY",
+            "TELEMETRY_RX_COMMAND_INCONSISTENT",
+            "TELEMETRY_FRESHNESS_RISK",
         ),
         expected_effect_tags=(
             "EFFECT_TELEMETRY_TRUST_EROSION",
             "EFFECT_DETECTION_BOUNDARY_PROBE",
         ),
         success_evidence_keys=(
+            "telemetry_command_confusion",
+            "stale_state_acceptance",
+            "wrong_safety_decision",
+            "tx_rx_consistency_pressure",
+            "telemetry_learning_signal",
+            "telemetry_memory_anchor_present",
+            "ack_gap",
+            "ack_delay_ms",
+            "latency_ms",
+            "packet_interval_jitter_ms",
+            "legacy_sensor_delta",
             "battery_delta",
             "motor_mismatch",
             "impossible_drain_hint",
@@ -126,7 +146,8 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "defense_action_count",
         ),
         failure_modes=(
-            "external telemetry remains physically plausible",
+            "read-only telemetry tx/rx memory does not provide useful ambiguity",
+            "command ACK and timing remain causally aligned",
             "internal observe and cross-check capability dominate Blue trust",
             "selected goal requires command freshness or mission-priority effects",
         ),
@@ -136,8 +157,9 @@ CONTRACTS: dict[str, AttackEffectContract] = {
             "MAVSec 2019: unsecured telemetry links lack integrity protection in common MAVLink setups",
         ),
         rationale=(
-            "This contract models false-data injection against external telemetry belief. The expected "
-            "effect is trust erosion through physical inconsistency, not command replay or target-priority drift."
+            "This contract now models telemetry-memory-assisted trust erosion: Red can read tx/rx telemetry "
+            "history, but cannot mutate those telemetry projections directly, so the simulated effect is produced "
+            "through bounded command, ACK, and link-timing ambiguity."
         ),
     ),
     "TIME_DESYNC_REPLAY": AttackEffectContract(

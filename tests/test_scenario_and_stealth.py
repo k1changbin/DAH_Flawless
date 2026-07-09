@@ -158,13 +158,13 @@ class ScenarioPackTests(unittest.TestCase):
 
 
 class StealthControllerTests(unittest.TestCase):
-    def test_static_stealth_telemetry_is_caught_by_cross_checks(self):
+    def test_static_stealth_telemetry_memory_attack_is_caught_by_ack_checks(self):
         logs, _ = run_simulation(seed=42, rounds=3, stealth_mode="on")
         telemetry = next(entry for entry in logs if entry["attack"]["name"] == "TELEMETRY_FDI")
         self.assertTrue(telemetry["stealth"])
         self.assertTrue(telemetry["score"]["attack_success"])
         self.assertTrue(telemetry["score"]["detection_success"])
-        self.assertIn("BATTERY_ENERGY_IMPOSSIBLE", telemetry["situation_tags"])
+        self.assertIn("ACK_TIMING_ANOMALY", telemetry["situation_tags"])
 
     def test_loud_telemetry_is_detected(self):
         logs, _ = run_simulation(seed=42, rounds=3, stealth_mode="off")

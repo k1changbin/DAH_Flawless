@@ -14,6 +14,7 @@ from dah_flawless.blue.goal_consistency import effect_id_from_goal_id, effect_id
 from dah_flawless.blue.observe_policy_gate import policy_containment_score
 from dah_flawless.config import AVAIL_FLOOR, RECOVERY_TARGET
 from dah_flawless.schemas import Attack, DefenseAction, Threat
+from dah_flawless.telemetry_indirect import telemetry_memory_confusion_evidence
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,8 @@ def _low_cost_bonus(actions: list[DefenseAction]) -> float:
 def _effect_pressure(effect_id: str, state: dict, attack: Attack) -> float:
     if effect_id == "EFFECT_TELEMETRY_TRUST_EROSION":
         truth = state["world"]["uav"]
-        observed = state["blue_observed"]["telemetry"]
+        observed_state = state["blue_observed"]
+        observed = observed_state["telemetry"]
         battery_delta = abs(float(observed["battery_percent"]) - float(truth["battery_percent"]))
         motor_mismatch = 1.0 if observed["motor_status"] != truth["motor_status"] else 0.0
         drain_hint = (
@@ -209,7 +211,9 @@ def _effect_pressure(effect_id: str, state: dict, attack: Attack) -> float:
             and observed["battery_percent"] > truth["battery_percent"]
             else 0.0
         )
-        return min(1.0, battery_delta / 35.0 + 0.25 * motor_mismatch + 0.20 * drain_hint)
+        direct_score = min(1.0, battery_delta / 35.0 + 0.25 * motor_mismatch + 0.20 * drain_hint)
+        indirect_score = float(telemetry_memory_confusion_evidence(observed_state)["indirect_effect_score"])
+        return max(direct_score, indirect_score)
 
     if effect_id == "EFFECT_WRONG_TARGET_SELECTION":
         truth = state["world"]["mission"]["area_priority"]

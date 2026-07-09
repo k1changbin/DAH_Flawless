@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dah_flawless.config import CAPABILITY_FACTORS
 from dah_flawless.schemas import Threat
+from dah_flawless.blue.telemetry_channel_checks import analyze_telemetry_channel_checks
+from dah_flawless.telemetry_indirect import telemetry_memory_confusion_evidence
 
 
 EFFECT_TAGS = (
@@ -101,12 +103,25 @@ def _maybe_add_telemetry_trust_erosion(
         effect_score = max(effect_score, min(1.0, 0.48 + battery_delta / 18.0 + (0.12 if motor_mismatch else 0.0)))
     if "TELEMETRY_SERIAL_DRIFT" in tag_set:
         effect_score = max(effect_score, min(1.0, 0.42 + battery_delta / 22.0))
+    indirect = telemetry_memory_confusion_evidence(obs)
+    indirect_score = float(indirect["indirect_effect_score"])
+    channel_checks = analyze_telemetry_channel_checks(obs)
+    channel_score = float(channel_checks["max_score"])
+    effect_score = max(effect_score, indirect_score, channel_score)
     if effect_score < 0.22:
         return
 
     confidence = (0.58 + effect_score * 0.36) * _capability_factor(capabilities, "cross_check_telemetry")
     if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in tag_set:
         confidence += 0.08
+    indirect_active = indirect_score >= 0.20
+    direct_disagree = (
+        battery_delta > 0.0
+        or motor_mismatch
+        or drain_mismatch > 0.0
+        or "TELEMETRY_INTERNAL_TX_DISAGREE" in channel_checks["tags"]
+        or "TELEMETRY_TX_RX_DISAGREE" in channel_checks["tags"]
+    )
     _add_hypothesis(
         hypotheses,
         goal_id="TELEMETRY_TRUST_EROSION",
@@ -116,9 +131,11 @@ def _maybe_add_telemetry_trust_erosion(
             sorted(
                 {
                     "EFFECT_TELEMETRY_TRUST_EROSION",
-                    "INTERNAL_EXTERNAL_TELEMETRY_DISAGREE",
+                    *({"INTERNAL_EXTERNAL_TELEMETRY_DISAGREE"} if direct_disagree else set()),
                     *({"TELEMETRY_SAFETY_ANCHOR_RESIDUAL"} if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in tag_set else set()),
                     *({"TELEMETRY_SERIAL_DRIFT"} if "TELEMETRY_SERIAL_DRIFT" in tag_set else set()),
+                    *({"TELEMETRY_MEMORY_COMMAND_CONFUSION"} if indirect_active else set()),
+                    *set(channel_checks["tags"]),
                 }
             )
         ),
@@ -128,6 +145,8 @@ def _maybe_add_telemetry_trust_erosion(
             f"battery_delta={round(battery_delta, 4)}",
             f"motor_mismatch={motor_mismatch}",
             f"safety_anchor_residual={internal_safety_critical and external_looks_safer}",
+            *_telemetry_indirect_evidence_strings(indirect),
+            *_telemetry_channel_check_evidence_strings(channel_checks),
         ),
         effect_score=effect_score,
     )
@@ -172,6 +191,31 @@ def _maybe_add_wrong_target_selection(hypotheses: list[dict], obs: dict, history
         ),
         effect_score=effect_score,
     )
+
+
+def _telemetry_indirect_evidence_strings(indirect: dict) -> tuple[str, ...]:
+    return (
+        f"telemetry_memory_anchor_present={indirect['telemetry_memory_anchor_present']}",
+        f"telemetry_memory_read_only_confirmed={indirect['telemetry_memory_read_only_confirmed']}",
+        f"ack_gap={indirect['ack_gap']}",
+        f"ack_delay_ms={indirect['ack_delay_ms']}",
+        f"latency_ms={indirect['latency_ms']}",
+        f"packet_interval_jitter_ms={indirect['packet_interval_jitter_ms']}",
+        f"command_decoy={indirect['command_decoy']}",
+        f"indirect_effect_score={indirect['indirect_effect_score']}",
+    )
+
+
+def _telemetry_channel_check_evidence_strings(channel_checks: dict) -> tuple[str, ...]:
+    evidence = [
+        f"telemetry_channel_checks.schema_id={channel_checks['schema_id']}",
+        f"telemetry_channel_checks.failed_checks={list(channel_checks['failed_checks'])}",
+        f"telemetry_channel_checks.max_score={channel_checks['max_score']}",
+    ]
+    for check_id, check in channel_checks.get("checks", {}).items():
+        evidence.append(f"telemetry_channel_checks.{check_id}.status={check['status']}")
+        evidence.append(f"telemetry_channel_checks.{check_id}.score={check['score']}")
+    return tuple(evidence)
 
 
 def _maybe_add_command_stale_acceptance(

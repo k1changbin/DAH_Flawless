@@ -35,6 +35,10 @@ def analyze_invariants(
         "BATTERY_ENERGY_IMPOSSIBLE",
         "GNSS_INTERNAL_CONFLICT",
         "IMU_TELEMETRY_DIVERGENCE",
+        "TELEMETRY_INTERNAL_TX_DISAGREE",
+        "TELEMETRY_TX_RX_DISAGREE",
+        "TELEMETRY_RX_COMMAND_INCONSISTENT",
+        "TELEMETRY_FRESHNESS_RISK",
     }.intersection(tag_set)
     if telemetry_tags:
         base_confidence = 0.78 if "TELEMETRY_SAFETY_ANCHOR_RESIDUAL" in telemetry_tags else 0.70
@@ -45,8 +49,8 @@ def analyze_invariants(
                 confidence=confidence,
                 tags=tuple(sorted(telemetry_tags)),
                 evidence=(
-                    "battery, drain rate, motor state, GNSS, and IMU signals are not mutually consistent",
-                    "observed-only cross-checks indicate telemetry manipulation or sensor paralysis",
+                    "internal telemetry, tx mirror, rx view, command context, freshness, and sensor signals are not mutually consistent",
+                    "observed-only cross-checks indicate telemetry manipulation, stale telemetry use, or command-context confusion",
                 ),
             )
         )

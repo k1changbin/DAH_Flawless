@@ -31,10 +31,28 @@ PROFILE_POLICY_ID = {
     "loud_demo": "dah.mutation_policy.v0_1.profile.loud_demo",
 }
 
-TELEMETRY_PROFILE = {
-    "stealth": {"max_probe_delta": 8, "motor_status": "FAULT"},
-    "aggressive": {"battery_delta": 25, "motor_status": "OK"},
-    "loud_demo": {"battery_absolute": 82, "motor_status": "OK"},
+TELEMETRY_INDIRECT_PROFILE = {
+    "stealth": {
+        "ack_sequence_delta": -1,
+        "ack_delay_ms": 360,
+        "latency_ms": 300,
+        "packet_interval_jitter_ms": 150,
+        "command": None,
+    },
+    "aggressive": {
+        "ack_sequence_delta": -2,
+        "ack_delay_ms": 950,
+        "latency_ms": 540,
+        "packet_interval_jitter_ms": 460,
+        "command": "CONTINUE_MISSION",
+    },
+    "loud_demo": {
+        "ack_sequence_delta": -5,
+        "ack_delay_ms": 1500,
+        "latency_ms": 1200,
+        "packet_interval_jitter_ms": 900,
+        "command": "CONTINUE_MISSION",
+    },
 }
 
 MISSION_PRIORITY_PROFILE = {
@@ -147,48 +165,106 @@ def _mutation_log(
 
 def _mutate_telemetry(obs: dict, tactic: dict, profile: str) -> MutationOutcome:
     policy = MutationPolicyEnforcer(profile)
-    before = {
-        "battery_percent": obs["telemetry"]["battery_percent"],
-        "motor_status": obs["telemetry"]["motor_status"],
-    }
-    profile_spec = TELEMETRY_PROFILE[profile]
+    before = _telemetry_indirect_snapshot(obs)
+    params = _telemetry_indirect_params(obs, tactic, profile)
+    requested_delta = deepcopy(params)
+    c2_message = obs["c2_message"]
+    comms = obs["comms"]
+    ack = c2_message.setdefault("ack", {})
+    ack["visible"] = True
+    ack["status"] = "ACCEPTED"
+    comms["ack_visible"] = True
 
-    if profile == "stealth":
-        requested_delta = int(tactic.get("probe_delta", profile_spec["max_probe_delta"]))
-        applied_delta = policy.add_value(
-            obs,
-            "telemetry.battery_percent",
-            requested_delta,
-            value_min=0,
-            value_max=100,
-        )
-    elif "battery_absolute" in profile_spec:
-        requested_delta = profile_spec["battery_absolute"] - obs["telemetry"]["battery_percent"]
-        before_battery = obs["telemetry"]["battery_percent"]
-        applied_value = policy.set_absolute(
-            obs,
-            "telemetry.battery_percent",
-            profile_spec["battery_absolute"],
-            value_min=0,
-            value_max=100,
-        )
-        applied_delta = applied_value - before_battery
-    else:
-        requested_delta = profile_spec["battery_delta"]
-        applied_delta = policy.add_value(
-            obs,
-            "telemetry.battery_percent",
-            requested_delta,
-            value_min=0,
-            value_max=100,
-        )
+    applied: dict[str, Any] = {}
+    applied["ack_sequence_number"] = policy.set_with_delta_limit(
+        obs,
+        "c2_message.ack.sequence_number",
+        int(c2_message["sequence_number"]) + int(params["ack_sequence_delta"]),
+        value_min=0,
+    )
+    applied["ack_delay_ms"] = policy.set_with_delta_limit(
+        obs,
+        "comms.ack_delay_ms",
+        int(params["ack_delay_ms"]),
+    )
+    applied["latency_ms"] = policy.set_with_delta_limit(
+        obs,
+        "comms.latency_ms",
+        int(params["latency_ms"]),
+    )
+    applied["packet_interval_jitter_ms"] = policy.set_with_delta_limit(
+        obs,
+        "comms.packet_interval_jitter_ms",
+        int(params["packet_interval_jitter_ms"]),
+    )
+    if params.get("command"):
+        applied["command"] = policy.set_enum(obs, "c2_message.command", params["command"])
 
-    policy.set_enum(obs, "telemetry.motor_status", profile_spec["motor_status"])
-    after = {
-        "battery_percent": obs["telemetry"]["battery_percent"],
-        "motor_status": obs["telemetry"]["motor_status"],
+    after = _telemetry_indirect_snapshot(obs)
+    return MutationOutcome(before, after, requested_delta, applied, policy.decision_dicts())
+
+
+def _telemetry_indirect_params(obs: dict, tactic: dict, profile: str) -> dict[str, Any]:
+    params = {**TELEMETRY_INDIRECT_PROFILE[profile], **tactic.get("params", {})}
+    if tactic.get("strategy") == "boundary_probe" or "probe_delta" in tactic:
+        probe_delta = abs(int(tactic.get("probe_delta", 2)))
+        params["ack_sequence_delta"] = -max(1, int(round(probe_delta / 4)))
+        params["ack_delay_ms"] = int(obs["comms"].get("ack_delay_ms", 0)) + max(100, probe_delta * 30)
+        params["latency_ms"] = int(obs["comms"].get("latency_ms", 0)) + max(70, probe_delta * 18)
+        params["packet_interval_jitter_ms"] = int(obs["comms"].get("packet_interval_jitter_ms", 0)) + max(
+            60,
+            probe_delta * 10,
+        )
+        params["command"] = None
+    elif tactic.get("strategy") in {"telemetry_false_data", "internal_external_gap_shaping"}:
+        params["command"] = params.get("command") or _command_decoy_from_telemetry_memory(obs)
+    return params
+
+
+def _command_decoy_from_telemetry_memory(obs: dict) -> str:
+    channels = obs.get("telemetry_channels") or obs.get("external_observe", {}).get("telemetry_channels", {})
+    asset_tx = channels.get("asset_tx_mirror", {})
+    battery = asset_tx.get("battery_percent")
+    motor = asset_tx.get("motor_status")
+    if (isinstance(battery, (int, float)) and float(battery) <= 25.0) or motor != "OK":
+        return "CONTINUE_MISSION"
+    return "HOLD_POSITION"
+
+
+def _telemetry_indirect_snapshot(obs: dict) -> dict[str, Any]:
+    c2_message = obs["c2_message"]
+    ack = c2_message.get("ack", {})
+    comms = obs["comms"]
+    channels = obs.get("telemetry_channels") or obs.get("external_observe", {}).get("telemetry_channels", {})
+    asset_tx = channels.get("asset_tx_mirror", {})
+    ground_rx = channels.get("ground_rx_view", {})
+    return {
+        "telemetry": {
+            "battery_percent": obs["telemetry"]["battery_percent"],
+            "motor_status": obs["telemetry"]["motor_status"],
+            "battery_drain_rate": obs["telemetry"].get("battery_drain_rate"),
+        },
+        "telemetry_memory_anchor": {
+            "asset_tx_battery_percent": asset_tx.get("battery_percent"),
+            "ground_rx_battery_percent": ground_rx.get("battery_percent"),
+            "asset_tx_motor_status": asset_tx.get("motor_status"),
+            "ground_rx_motor_status": ground_rx.get("motor_status"),
+            "rx_confidence": ground_rx.get("confidence"),
+            "freshness_s": ground_rx.get("freshness_s"),
+            "read_only_confirmed": not bool(asset_tx.get("red_direct_mutation_allowed", False))
+            and not bool(ground_rx.get("red_direct_mutation_allowed", False)),
+        },
+        "command_channel": {
+            "command": c2_message.get("command"),
+            "sequence_number": c2_message.get("sequence_number"),
+            "ack_sequence_number": ack.get("sequence_number"),
+            "ack_visible": bool(comms.get("ack_visible") or ack.get("visible")),
+            "ack_status": ack.get("status"),
+            "latency_ms": comms.get("latency_ms"),
+            "ack_delay_ms": comms.get("ack_delay_ms"),
+            "packet_interval_jitter_ms": comms.get("packet_interval_jitter_ms"),
+        },
     }
-    return MutationOutcome(before, after, requested_delta, applied_delta, policy.decision_dicts())
 
 
 def _mutate_priority(obs: dict, _tactic: dict, profile: str) -> MutationOutcome:
@@ -232,10 +308,7 @@ def _reviewed_outcome(attack_name: str, outcome: MutationOutcome, obs: dict) -> 
 
 def _snapshot_for_attack(attack_name: str, obs: dict) -> Any:
     if attack_name == "TELEMETRY_FDI":
-        return {
-            "battery_percent": obs["telemetry"]["battery_percent"],
-            "motor_status": obs["telemetry"]["motor_status"],
-        }
+        return _telemetry_indirect_snapshot(obs)
     if attack_name == "PRIORITY_POISONING":
         return deepcopy(obs["mission"]["area_priority"])
     if attack_name == "TIME_DESYNC_REPLAY":
@@ -247,7 +320,7 @@ def _delta_for_attack(attack_name: str, before: Any, after: Any) -> Any:
     if attack_name == "PRIORITY_POISONING":
         return _priority_delta(before, after)
     if attack_name == "TELEMETRY_FDI":
-        return after["battery_percent"] - before["battery_percent"]
+        return _generic_delta(before, after)
     if attack_name == "TIME_DESYNC_REPLAY":
         return _generic_delta(before, after)
     return None

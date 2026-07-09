@@ -89,6 +89,17 @@ src/dah_flawless/situation_tagger.py
 
 ## 7. Mission / Telemetry Consistency Tags
 
+아래 telemetry channel check tag는 공용 Situation Tagger가 아니라 Blue `ThreatDetectionAgent`의
+`telemetry_channel_checks` 단계에서 추가된다. 목적은 기존 단일 internal/external 비교를 네 축으로
+나눠 로그와 threat evidence를 분리하는 것이다.
+
+| 태그 | 조건 예시 | 의미 |
+|---|---|---|
+| `TELEMETRY_INTERNAL_TX_DISAGREE` | `internal_observe.telemetry`와 `asset_tx_mirror`의 battery/motor 불일치 | 내부 anchor와 송출 projection 간 불일치 |
+| `TELEMETRY_TX_RX_DISAGREE` | `asset_tx_mirror`와 `ground_rx_view`의 battery/motor 불일치 | 송출 telemetry와 Blue 수신 telemetry 간 불일치 |
+| `TELEMETRY_RX_COMMAND_INCONSISTENT` | safety-critical rx telemetry와 command/ACK accept 의미가 충돌 | 수신 telemetry 상태와 명령 해석 간 혼동 |
+| `TELEMETRY_FRESHNESS_RISK` | freshness, latency, jitter, packet loss가 기준 초과 | 수신 telemetry가 오래됐거나 link quality가 낮음 |
+
 | 태그 | 조건 예시 | 의미 |
 |---|---|---|
 | `TELEMETRY_CONFLICT` | 배터리/모터/소모율이 물리적으로 맞지 않음 | 텔레메트리 정합성 위반 |
@@ -141,4 +152,3 @@ def derive_tags(obs, history):
 | `PRIORITY_POISONING` | `MISSION_PRIORITY_CHANGED`, `PAYLOAD_HIDDEN` |
 | `TIME_DESYNC_REPLAY` | `SEQUENCE_VISIBLE`, `TIMESTAMP_VISIBLE`, `REGULAR_PACKET_INTERVAL`, `ACK_CHANNEL_VISIBLE`, `METADATA_PLAINTEXT`, `STATE_UPDATE_DEPENDENT`, `HIGH_LATENCY`, `PACKET_LOSS_HIGH` |
 | `AGENT_DOS` | `QUEUE_DEPTH_HIGH`, `REQUEST_RATE_HIGH` |
-

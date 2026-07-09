@@ -34,7 +34,7 @@ class ClampMutationLLMAdapter(LLMJsonAdapter):
                         "content": (
                             '{"action": "clamp", "selected_scale": 0.5, "score": 0.86, '
                             '"reason": "half-scale is enough for the simulated test", '
-                            '"allowed_fields": ["telemetry.battery_percent"], '
+                            '"allowed_fields": ["c2_message.ack.sequence_number", "comms.ack_delay_ms"], '
                             '"safety_boundary": "simulated observe mutation only"}'
                         )
                     }
@@ -68,6 +68,30 @@ class MutationApprovalReviewerTests(unittest.TestCase):
         self.assertEqual(log["after"]["action"], "reject")
         self.assertIn("forbidden_observe_scope", log["after"]["reason"])
 
+    def test_heuristic_reviewer_rejects_telemetry_channel_projection_change(self):
+        reviewer = HeuristicMutationApprovalReviewer()
+        before = {
+            "telemetry_channels": {
+                "asset_tx_mirror": {"battery_percent": 20},
+                "ground_rx_view": {"battery_percent": 20},
+            }
+        }
+        proposed = deepcopy(before)
+        proposed["telemetry_channels"]["asset_tx_mirror"]["battery_percent"] = 99
+
+        selected, log = reviewer.review_mutation(
+            attack_name="TELEMETRY_FDI",
+            profile="aggressive",
+            tactic={"mutation_profile": "aggressive"},
+            before_observe=before,
+            proposed_observe=proposed,
+            outcome=FakeOutcome(),
+        )
+
+        self.assertEqual(selected, before)
+        self.assertEqual(log["after"]["action"], "reject")
+        self.assertIn("forbidden_observe_scope", log["after"]["reason"])
+
     def test_external_reviewer_can_clamp_bounded_mutation(self):
         state = create_baseline_state(seed=1)
         reviewer = ExternalLLMMutationApprovalReviewer(
@@ -82,7 +106,10 @@ class MutationApprovalReviewerTests(unittest.TestCase):
             mutation_approval_reviewer=reviewer,
         )
 
-        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 32)
+        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 20)
+        self.assertEqual(attacked["blue_observed"]["c2_message"]["ack"]["sequence_number"], 1020)
+        self.assertEqual(attacked["blue_observed"]["comms"]["ack_delay_ms"], 580)
+        self.assertEqual(attacked["blue_observed"]["comms"]["latency_ms"], 360)
         review = log["mutation_approval_review"]["after"]
         self.assertEqual(review["action"], "clamp")
         self.assertEqual(review["selected_scale"], 0.5)
@@ -102,7 +129,9 @@ class MutationApprovalReviewerTests(unittest.TestCase):
             mutation_approval_reviewer=reviewer,
         )
 
-        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 45)
+        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 20)
+        self.assertEqual(attacked["blue_observed"]["c2_message"]["ack"]["sequence_number"], 1019)
+        self.assertEqual(attacked["blue_observed"]["comms"]["ack_delay_ms"], 950)
         review = log["mutation_approval_review"]["after"]
         self.assertFalse(review["external_llm_used"])
         self.assertEqual(review["fallback_error"], "offline")

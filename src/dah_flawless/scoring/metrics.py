@@ -74,6 +74,20 @@ def summarize_logs(logs: list[dict]) -> dict:
         for gate in policy_gates
         for domain, decision in (gate.get("by_domain") or {}).items()
     )
+    telemetry_learning_signals = [_telemetry_learning_signal(entry) for entry in logs]
+    telemetry_learning_signals = [signal for signal in telemetry_learning_signals if signal]
+    telemetry_dominant_axes = Counter(
+        signal.get("dominant_axis", "UNKNOWN") for signal in telemetry_learning_signals
+    )
+    telemetry_active_axes = Counter(
+        axis for signal in telemetry_learning_signals for axis in signal.get("active_axes", [])
+    )
+    telemetry_weighted_scores = [
+        float(signal.get("weighted_effect_score", 0.0)) for signal in telemetry_learning_signals
+    ]
+    telemetry_axis_scores = _average_telemetry_axis_scores(telemetry_learning_signals)
+    telemetry_dominant_axis_entropy = _entropy(telemetry_dominant_axes)
+    telemetry_active_axis_entropy = _entropy(telemetry_active_axes)
 
     return {
         "rounds": len(logs),
@@ -122,6 +136,23 @@ def summarize_logs(logs: list[dict]) -> dict:
         else None,
         "observe_policy_restricted_round_count": policy_restricted_rounds,
         "observe_policy_domain_decisions": dict(sorted(policy_domain_decisions.items())),
+        "avg_telemetry_learning_signal": round(sum(telemetry_weighted_scores) / len(telemetry_weighted_scores), 4)
+        if telemetry_weighted_scores
+        else 0.0,
+        "telemetry_learning_axis_entropy": telemetry_active_axis_entropy,
+        "telemetry_dominant_axis_entropy": telemetry_dominant_axis_entropy,
+        "telemetry_policy_diversity_contribution": {
+            "telemetry_round_count": len(telemetry_learning_signals),
+            "dominant_axis_counts": dict(sorted(telemetry_dominant_axes.items())),
+            "active_axis_counts": dict(sorted(telemetry_active_axes.items())),
+            "avg_axis_scores": telemetry_axis_scores,
+            "axis_entropy": telemetry_active_axis_entropy,
+            "dominant_axis_entropy": telemetry_dominant_axis_entropy,
+            "active_axis_entropy": telemetry_active_axis_entropy,
+            "attack_entropy": _entropy(attacks),
+            "tactic_entropy": _entropy(tactics),
+            "interpretation": "higher axis entropy means telemetry tx/rx/internal/command/freshness changes trained more varied Red and Blue policy responses",
+        },
     }
 
 
@@ -129,7 +160,8 @@ def _entropy(counter: Counter) -> float:
     total = sum(counter.values())
     if total <= 0:
         return 0.0
-    return round(-sum((count / total) * log2(count / total) for count in counter.values()), 4)
+    entropy = round(-sum((count / total) * log2(count / total) for count in counter.values()), 4)
+    return 0.0 if abs(entropy) < 0.0001 else entropy
 
 
 def _winner_side(score: dict) -> str:
@@ -157,3 +189,24 @@ def _winner_detail(score: dict) -> str:
         "BLUE": "DETECTION",
         "DRAW": "NO_DECISION",
     }.get(score.get("winner"), "UNKNOWN")
+
+
+def _telemetry_learning_signal(entry: dict) -> dict:
+    score = entry.get("score", {})
+    goal_score = score.get("evidence", {}).get("goal_score", {})
+    goal_evidence = goal_score.get("evidence", {}) if isinstance(goal_score, dict) else {}
+    signal = goal_evidence.get("telemetry_learning_signal")
+    return signal if isinstance(signal, dict) else {}
+
+
+def _average_telemetry_axis_scores(signals: list[dict]) -> dict:
+    if not signals:
+        return {}
+    axes = sorted({axis for signal in signals for axis in signal.get("axis_scores", {})})
+    return {
+        axis: round(
+            sum(float(signal.get("axis_scores", {}).get(axis, 0.0)) for signal in signals) / len(signals),
+            4,
+        )
+        for axis in axes
+    }

@@ -90,6 +90,7 @@ Blue가 받는 observe는 이제 두 층으로 정의한다.
 blue_observed
   internal_observe  # 내부 센서/로컬 상태. Red가 직접 바꾸면 안 됨.
   external_observe  # 외부 신호/통신/원격 관측. Red mutation의 허용 표면.
+  telemetry_channels # 송출/수신 telemetry projection. Red read-only memory/intel 자원.
   legacy flat view  # 현재 MVP 코드 호환용 telemetry/navigation/mission/c2_message/comms 키.
 ```
 
@@ -98,7 +99,7 @@ blue_observed
 ```json
 {
   "blue_observed": {
-    "observe_schema_version": "dah.observe.v0_2",
+    "observe_schema_version": "dah.observe.v0_3",
     "internal_observe": {
       "time": {
         "true_timestamp": 1710001200,
@@ -128,6 +129,30 @@ blue_observed
     "external_observe": {
       "time": {},
       "telemetry": {},
+      "telemetry_channels": {
+        "schema_id": "dah.telemetry_channels.v0_1",
+        "asset_tx_mirror": {
+          "battery_percent": 20,
+          "battery_drain_rate": 1.0,
+          "motor_status": "FAULT",
+          "timestamp": 1710001200,
+          "frame_seq": 1021,
+          "red_visible": true,
+          "red_direct_mutation_allowed": false
+        },
+        "ground_rx_view": {
+          "battery_percent": 20,
+          "battery_drain_rate": 1.0,
+          "motor_status": "FAULT",
+          "received_timestamp": 1710001200,
+          "frame_seq": 1021,
+          "freshness_s": 0,
+          "confidence": 0.921,
+          "red_visible": true,
+          "red_direct_mutation_allowed": false,
+          "intended_red_use": "remember_patterns_then_choose_indirect_command_or_timing_actions"
+        }
+      },
       "navigation": {},
       "mission": {},
       "c2_message": {},
@@ -137,7 +162,36 @@ blue_observed
       "red_direct_mutation": {
         "internal_observe": false,
         "external_observe": true,
-        "allowed_external_domains": ["time", "telemetry", "navigation", "mission", "c2_message", "comms"]
+        "allowed_external_domains": ["time", "telemetry", "navigation", "mission", "c2_message", "comms"],
+        "read_only_external_domains": ["telemetry_channels"]
+      },
+      "red_can_read": {
+        "external_observe": true,
+        "telemetry_channels": true,
+        "telemetry_channels_intended_use": "pattern_memory_and_situation_awareness_only"
+      },
+      "red_visibility": {
+        "policy_id": "dah.red_visibility.v0_1",
+        "scope": "red_observe_visibility",
+        "can_read": {
+          "telemetry_channel_paths": [
+            "blue_observed.external_observe.telemetry_channels.asset_tx_mirror",
+            "blue_observed.external_observe.telemetry_channels.ground_rx_view",
+            "blue_observed.external_observe.telemetry_channels.link_summary"
+          ],
+          "intended_use": [
+            "telemetry_pattern_memory",
+            "situation_awareness",
+            "indirect_command_or_timing_action_selection"
+          ]
+        },
+        "mutation_excluded": {
+          "paths": [
+            "blue_observed.external_observe.telemetry_channels.*",
+            "blue_observed.telemetry_channels.*"
+          ],
+          "reason": "telemetry tx/rx records are read-only intel"
+        }
       },
       "blue_can_read": {
         "internal_observe": true,
@@ -150,7 +204,51 @@ blue_observed
 
 ### 4.2 Compatibility Flat View
 
-현재 MVP 코드와 테스트는 아직 `blue_observed.telemetry`, `blue_observed.navigation` 같은 flat key를 읽는다. 이 flat key들은 canonical 구조에서 `external_observe`의 alias다. 새 설계와 보고서에서는 `external_observe.telemetry`가 Red mutation 대상이라고 설명하고, 기존 flat key는 구현 호환용 view라고 설명한다.
+현재 MVP 코드와 테스트는 아직 `blue_observed.telemetry`, `blue_observed.navigation` 같은 flat key를 읽는다. 이 flat key들은 canonical 구조에서 `external_observe`의 alias다. 새 설계와 보고서에서는 기존 flat key를 구현 호환용 view라고 설명한다. `blue_observed.telemetry_channels`는 `external_observe.telemetry_channels`의 alias지만 read-only projection이다. Red는 이를 상황 파악과 memory feature로 읽을 수 있으나 `asset_tx_mirror`나 `ground_rx_view`를 직접 mutation하지 않는다.
+
+### 4.3 Red Telemetry Memory
+
+RedAgent는 `blue_observed.telemetry_channels`를 직접 mutation하지 않고, 최근 송출/수신 projection을 bounded runtime memory로만 저장한다. 이 memory는 이후 간접 command/timing action 재편에서 사용할 feature 준비 단계이며, 현재 공격 선택 점수나 mutation 경로를 직접 바꾸지 않는다. 학습 policy freeze 의미를 보존하기 위해 이 memory는 `red_policy_state`가 아니라 Red 선택 `decision_log.after.telemetry_memory`와 RedAgent runtime export로만 노출한다.
+
+```json
+{
+  "decision_log": [
+    {
+      "agent": "RedAgent",
+      "event": "attack_selected",
+      "after": {
+        "telemetry_memory": {
+          "schema_id": "dah.red_telemetry_memory.v0_1",
+          "max_records": 12,
+          "record_count": 1,
+          "records": [
+            {
+              "round": 1,
+              "source_schema_id": "dah.telemetry_channels.v0_1",
+              "asset_tx_mirror": {
+                "battery_percent": 20,
+                "motor_status": "FAULT",
+                "red_direct_mutation_allowed": false
+              },
+              "ground_rx_view": {
+                "battery_percent": 20,
+                "motor_status": "FAULT",
+                "confidence": 0.921,
+                "red_direct_mutation_allowed": false
+              },
+              "derived": {
+                "battery_delta_rx_minus_tx": 0.0,
+                "motor_mismatch": false,
+                "read_only_confirmed": true
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
+```
 
 ```json
 {
@@ -160,9 +258,9 @@ blue_observed
       "local_clock_offset_ms": 430
     },
     "telemetry": {
-      "battery_percent": 82,
+      "battery_percent": 20,
       "battery_drain_rate": 1.0,
-      "motor_status": "OK",
+      "motor_status": "FAULT",
       "altitude_m": 180,
       "speed_mps": 42,
       "heading_deg": 91
@@ -200,7 +298,7 @@ blue_observed
       "auth_valid": true,
       "ack": {
         "visible": true,
-        "sequence_number": 1008,
+        "sequence_number": 1006,
         "status": "ACCEPTED"
       }
     },
@@ -212,21 +310,25 @@ blue_observed
       "packet_loss": 0.12,
       "message_queue_depth": 12,
       "packet_interval_ms": 1000,
+      "packet_interval_jitter_ms": 460,
       "ack_visible": true,
-      "ack_delay_ms": 210,
+      "ack_delay_ms": 950,
       "anti_replay_window_s": 180
     }
   }
 }
 ```
 
-위 flat view 예시의 `battery_percent: 82`, `area_priority.C: 0.95` 같은 큰 변조값은 `loud_demo` profile 예시다. 기본 학습/보고서 실행 profile은 `aggressive`이며, 일반 실행에서는 더 작은 delta를 사용한다.
+위 flat view 예시에서 `TELEMETRY_FDI`는 telemetry 값을 직접 바꾸지 않는다.
+Red는 `telemetry_channels`를 read-only memory resource로 보고, ACK sequence/delay와 link timing을 통해 혼동을 만든다.
+`area_priority.C: 0.95` 같은 큰 변조값은 `loud_demo` profile 예시다.
+기본 학습/보고서 실행 profile은 `aggressive`이며, 일반 실행에서는 더 작은 delta를 사용한다.
 
 ## 5. 공격 3종이 반드시 쓰는 필드
 
 | 공격 | scorer_truth 기준 | observed 조작 대상 |
 |---|---|---|
-| `TELEMETRY_FDI` | `state["world"].uav.battery_percent`, `motor_status` | `blue_observed.telemetry.*` |
+| `TELEMETRY_FDI` | `state["world"].uav.*` and telemetry tx/rx memory context | `blue_observed.c2_message.ack.*`, `blue_observed.comms.ack_delay_ms`, `blue_observed.comms.latency_ms`, `blue_observed.comms.packet_interval_jitter_ms`, optional `blue_observed.c2_message.command` |
 | `PRIORITY_POISONING` | `state["world"].mission.area_priority` | `blue_observed.mission.area_priority` |
 | `TIME_DESYNC_REPLAY` | `state["world"].command.*`, `state["world"].time.true_timestamp` | `blue_observed.c2_message.*`, `blue_observed.time.received_timestamp` |
 

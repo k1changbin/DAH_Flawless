@@ -75,6 +75,23 @@ class BlueFeedbackLearnerTests(unittest.TestCase):
         self.assertEqual(adjusted[0].confidence, 0.60)
         self.assertIn("effect_sensitivity", log["after"])
 
+    def test_detection_policy_applies_telemetry_axis_sensitivity(self):
+        policy = default_blue_policy_state()
+        policy["telemetry_axis_sensitivity"]["telemetry_command_confusion"] = 1.2
+        threats = [
+            Threat(
+                "telemetry",
+                0.50,
+                ("TELEMETRY_RX_COMMAND_INCONSISTENT",),
+                ("rx command mismatch",),
+            )
+        ]
+
+        adjusted, log = apply_detection_policy(threats, policy)
+
+        self.assertEqual(adjusted[0].confidence, 0.60)
+        self.assertIn("telemetry_axis_sensitivity", log["after"])
+
     def test_missed_goal_effect_raises_effect_sensitivity(self):
         policy = default_blue_policy_state()
         score = Score(
@@ -256,6 +273,56 @@ class BlueFeedbackLearnerTests(unittest.TestCase):
         self.assertEqual(updated["effect_mission_impact_counts"][effect_id], 1)
         self.assertEqual(log["after"]["mission_impact_feedback"]["mission_impact_level"], "HIGH")
         self.assertEqual(log["after"]["effect_update_reason"], "detected_goal_effect_reinforce_high_mission_impact")
+
+    def test_missed_telemetry_axis_raises_axis_sensitivity(self):
+        policy = default_blue_policy_state()
+        axis = "telemetry_command_confusion"
+        score = Score(
+            winner="BLUE",
+            attack_success=True,
+            detection_success=True,
+            false_positive=False,
+            recovery_success=False,
+            availability=0.88,
+            target_domain="telemetry",
+            goal_id="TELEMETRY_TRUST_EROSION",
+            goal_success=True,
+            goal_reward=0.78,
+            evidence={
+                "goal_score": {
+                    "goal_id": "TELEMETRY_TRUST_EROSION",
+                    "evidence": {
+                        "telemetry_learning_signal": {
+                            "dominant_axis": axis,
+                            "axis_scores": {
+                                axis: 0.62,
+                                "stale_state_acceptance": 0.28,
+                                "wrong_safety_decision": 0.22,
+                                "tx_rx_consistency_pressure": 0.0,
+                                "legacy_sensor_delta": 0.0,
+                            },
+                            "active_axes": [axis, "stale_state_acceptance", "wrong_safety_decision"],
+                            "axis_entropy": 1.32,
+                            "blue_policy_learning_value": 0.68,
+                        }
+                    },
+                },
+                "mission_impact": {
+                    "mission_impact_score": 0.80,
+                    "level": "HIGH",
+                    "primary_component": "telemetry_safety",
+                    "target_component": "telemetry_safety",
+                },
+            },
+        )
+        threats = [Threat("telemetry", 0.80, ("EFFECT_TELEMETRY_TRUST_EROSION",), ("generic telemetry effect",))]
+
+        updated, log = update_blue_policy(policy, score, threats, [])
+
+        self.assertGreater(updated["telemetry_axis_sensitivity"][axis], policy["telemetry_axis_sensitivity"][axis])
+        self.assertLess(updated["telemetry_axis_threshold"][axis], policy["telemetry_axis_threshold"][axis])
+        self.assertEqual(updated["telemetry_axis_feedback_counts"][axis]["missed_axis"], 1)
+        self.assertEqual(log["after"]["telemetry_axis_update_reason"], "missed_telemetry_axis_raise_sensitivity")
 
     def test_detection_boundary_probe_feedback_maps_to_underlying_effect(self):
         policy = default_blue_policy_state()

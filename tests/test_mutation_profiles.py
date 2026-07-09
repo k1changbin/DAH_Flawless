@@ -56,8 +56,9 @@ class MutationProfileTests(unittest.TestCase):
         self.assertEqual(tactic["mutation_profile"], "stealth")
         self.assertNotEqual(tactic["params"]["timestamp_delta_s"], -400)
 
-    def test_telemetry_aggressive_is_not_old_loud_value(self):
+    def test_telemetry_aggressive_uses_indirect_ack_confusion(self):
         state = create_baseline_state(seed=1)
+        before_telemetry = dict(state["blue_observed"]["telemetry"])
 
         attacked, log = apply_attack(
             state,
@@ -66,11 +67,16 @@ class MutationProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(log["mutation_profile"], "aggressive")
-        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 45)
-        self.assertNotEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 82)
+        self.assertEqual(attacked["blue_observed"]["telemetry"], before_telemetry)
+        self.assertEqual(attacked["blue_observed"]["c2_message"]["ack"]["sequence_number"], 1019)
+        self.assertEqual(attacked["blue_observed"]["comms"]["ack_delay_ms"], 950)
+        self.assertEqual(attacked["blue_observed"]["comms"]["latency_ms"], 540)
+        self.assertEqual(attacked["blue_observed"]["comms"]["packet_interval_jitter_ms"], 460)
+        self.assertEqual(attacked["blue_observed"]["c2_message"]["command"], "CONTINUE_MISSION")
 
-    def test_telemetry_loud_demo_keeps_old_demo_value(self):
+    def test_telemetry_loud_demo_uses_larger_indirect_values(self):
         state = create_baseline_state(seed=1)
+        before_telemetry = dict(state["blue_observed"]["telemetry"])
 
         attacked, log = apply_attack(
             state,
@@ -80,7 +86,11 @@ class MutationProfileTests(unittest.TestCase):
 
         self.assertEqual(log["mutation_profile"], "loud_demo")
         self.assertEqual(log["policy_id"], "dah.mutation_policy.v0_1.profile.loud_demo")
-        self.assertEqual(attacked["blue_observed"]["telemetry"]["battery_percent"], 82)
+        self.assertEqual(attacked["blue_observed"]["telemetry"], before_telemetry)
+        self.assertEqual(attacked["blue_observed"]["c2_message"]["ack"]["sequence_number"], 1016)
+        self.assertEqual(attacked["blue_observed"]["comms"]["ack_delay_ms"], 1500)
+        self.assertEqual(attacked["blue_observed"]["comms"]["latency_ms"], 1200)
+        self.assertEqual(attacked["blue_observed"]["comms"]["packet_interval_jitter_ms"], 900)
 
     def test_out_of_scope_attack_has_no_mutation_handler(self):
         state = create_baseline_state(seed=1)
