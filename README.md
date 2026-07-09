@@ -1,149 +1,127 @@
-# DAH Flawless MVP
+# DAH Flawless — Red/Blue 사이버 AI 시뮬레이션
 
-DAH_Flawless는 DAH 예선 보고서용 Red/Blue 사이버 AI 시뮬레이션 MVP입니다. 실제 침투 도구가 아니라, UAV/UGV/위성통신 환경을 단순화한 안전한 시뮬레이션 안에서 Red AI가 Blue 관측 입력을 오염시키고 Blue AI가 관측값의 모순을 탐지·격리·복구하는 구조를 증명합니다.
+UAV·UGV·위성통신(SATCOM) 환경을 안전하게 추상화한 시뮬레이션 안에서 **Red AI가 Blue의 관측 입력을 오염**시키고 **Blue AI가 그 모순을 탐지·격리·복구**하는 적대적 공방을 재현한다. 실제 침투 도구가 아니라, "관측을 믿을 수 있는가(observe-integrity)"라는 문제를 AI 대 AI로 증명하는 연구용 시뮬레이터다.
 
-## 핵심 요약
+- **Red**: `external_observe`(외부 신호/통신/메타데이터)의 값·시간·순서를 안전한 범위로 변조해 Blue의 임무 판단을 흔든다. 암호를 깨거나 시스템을 장악하지 않는다.
+- **Blue**: `internal_observe`(Red가 못 건드리는 내부 앵커)와 관측 이력만으로 오염을 추정하고, ZTA(Zero Trust) 정책으로 오염 도메인을 제한·복구한다. 정답지(scorer truth)는 절대 못 본다.
 
-```text
-raw_world -> Feature Extractor -> State Adapter
-          -> scorer_truth(state["world"]) + blue_observed
-          -> Situation Tagger -> Red/Blue Agents -> Scorer/Admin
+---
+
+## 빠른 시작 (심사·데모용)
+
+전제: **Docker Desktop 실행 중.**
+
+```bash
+docker compose up frontend
 ```
 
-가장 중요한 용어 경계는 아래와 같습니다.
+→ 브라우저에서 **http://localhost:8080**
+
+랜딩(시작) 화면 → **"시뮬레이션 진입"** → 3D 전술 대시보드가 뜬다.
+
+| 영역 | 내용 |
+|---|---|
+| 좌측 RED OPS | 공격 벡터·현재 행동·mutation·목표/보상 |
+| 중앙 3D 전장 | UAV·UGV·CMD LINK·BLUE C2 노드, 공격 흐름 라인, 탐지 펄스 |
+| 우측 BLUE DEF | 의심도·ZTA 게이트 판정·방어 행동·예산 |
+| 위성 창 | Suspicion 추이·ZTA 정책 히트맵·텔레메트리·이벤트 로그 |
+| 하단 | 스텝 타임라인 + 스크러버 |
+
+조작: `Space` 재생/정지, `←/→` 스텝 이동, `R1~R6` 라운드 전환. 종료는 `docker compose down`.
+
+> 대시보드는 실제 백엔드 시뮬레이션 결과(seed 42, 6라운드)를 **재현 가능한 리플레이**로 시각화한다. 미리 빌드된 단일 HTML 번들이라 Node·네트워크 없이 오프라인에서도 뜬다. 커스텀 seed/라운드로 **직접 다시 돌리려면** 아래 백업 콘솔(Streamlit)을 쓴다.
+
+---
+
+## 아키텍처
+
+```text
+raw_world (규칙기반 생성, seed 고정)
+  -> Feature Extractor -> State Adapter
+  -> scorer_truth(state["world"])  +  blue_observed(internal/external)
+  -> Situation Tagger
+  -> Red Attack Selector / Blue Threat Detection
+  -> Mutation(Red) / Defense·ZTA Gate(Blue)
+  -> Scorer (승패·goal reward·mission impact·containment)
+  -> Feedback -> Red/Blue 정책 가중치 업데이트 (다음 라운드에 반영)
+```
+
+핵심 용어 경계(위반 금지):
 
 | 용어 | 의미 | 접근 권한 |
 |---|---|---|
-| `raw_world` | 현실 전장에 존재하는 원천 신호·방출·환경·사건. 예: RF, GNSS, SATCOM, MAVLink-like C2 emission, 날씨, 지형 | generator/extractor/adapter |
-| `scorer_truth` | scorer가 채점에 쓰는 기준 상태. 현재 코드에서는 호환성 때문에 `state["world"]` 키에 저장 | environment/scorer/admin only |
-| `blue_observed` | Blue 관제 AI가 받은 관측 입력. 내부/외부 observe를 포함 | Red/Blue |
-| `internal_observe` | 내부 센서/로컬 상태 관측. Red가 직접 조작하지 못함 | Blue trust anchor |
-| `external_observe` | 외부 신호/통신/원격 관측. Red mutation의 허용 표면 | Red mutation surface |
+| `raw_world` | 현실 전장의 원천 신호·환경(RF·GNSS·SATCOM·C2 emission·날씨·지형) | generator/extractor/adapter |
+| `scorer_truth` | 채점 기준 정답 상태. 호환성 때문에 `state["world"]` 키에 저장 | environment/scorer/admin 전용 |
+| `blue_observed` | Blue AI가 받은 관측 입력 (내부+외부) | Red/Blue |
+| `internal_observe` | 내부 센서/로컬 상태. **Red가 직접 조작 불가** → Blue의 신뢰 앵커 | Blue trust anchor |
+| `external_observe` | 외부 신호/통신/원격 관측. **Red mutation 허용 표면** | Red mutation surface |
 
-`state["world"]`는 이름 때문에 헷갈리지만 raw world가 아닙니다. 현재 MVP에서는 scorer-only 정답지이며, Red/Blue 입력에서는 redaction으로 제거됩니다.
+**불변식:** Blue는 `raw_world`와 `scorer_truth`를 절대 볼 수 없다. Red/Blue 입력에서 정답지는 redaction으로 제거된다. Red는 `external_observe`만 변조할 수 있다.
 
-## 현재 구현
+공격 3종(scripted 커버리지) + Goal Planner 기반 동적 목표 선택:
+`TIME_DESYNC_REPLAY`(command), `TELEMETRY_FDI`(telemetry), `PRIORITY_POISONING`(mission).
 
-| 모듈 | 파일 | 상태 |
+---
+
+## 실행 방식 요약
+
+| 목적 | 명령 | 접근 |
 |---|---|---|
-| Raw World Schema | `configs/raw_world_schema.yaml`, `docs/raw_world_schema.md` | 구현 |
-| Mutation Policy | `configs/mutation_policy.yaml`, `docs/mutation_policy.md`, `src/dah_flawless/attacks/mutation_policy.py` | 핵심 필드 runtime clamp/reject 구현 |
-| Mutation Approval Reviewer | `src/dah_flawless/mutation_review/`, `configs/mutation_approval_reviewer.json` | observe 변조 approve/clamp/reject, 실패 시 오프라인 heuristic fallback |
-| World Generator | `src/dah_flawless/world/generator.py` | rule-based 구현 |
-| Feature Extractor | `src/dah_flawless/world/feature_extractor.py` | 구현 |
-| State Adapter | `src/dah_flawless/world/state_adapter.py` | raw_world를 scorer_truth/blue_observed로 변환 |
-| Situation Tagger | `src/dah_flawless/situation_tagger.py` | 통신/텔레메트리/임무 태그 구현 |
-| Goal Planner | `src/dah_flawless/attacks/goal_planner.py` | 이전 로그와 현재 context 기반 cyber-effect 목표 선택, 최근 목표/domain 반복 감점 diversity guard |
-| Attack-Effect Contract | `src/dah_flawless/attacks/effect_contracts.py`, `docs/attack_effect_contracts.md` | 공격 후보와 지원 goal/effect/evidence 정합성 기준 |
-| Attack Selector | `src/dah_flawless/attacks/selector.py` | 태그/contract 기반 후보 점수화, 최근 공격 반복 감점 attack diversity penalty |
-| Mutation Engine | `src/dah_flawless/attacks/mutations.py` | handler 기반 observed 변조 |
-| EpisodeRunner | `src/dah_flawless/environment/episode_runner.py` | 30-step episode 실행, episode/global step 로그와 해시 체인 |
-| RoundCombatRunner | `src/dah_flawless/environment/round_combat_runner.py` | 1 round를 최대 100개 decision step의 동적 Red/Blue 공방 episode로 실행 |
-| TrainingScheduler | `src/dah_flawless/environment/training_scheduler.py` | Blue-only/Red-only/fixed-eval block 실행 |
-| Rolling Log Memory | `src/dah_flawless/environment/log_memory.py` | 일정 라운드마다 Red planning context를 압축 proxy log로 교체해 장기 반복 편향 완화 |
-| HoldoutEvaluator | `src/dah_flawless/environment/holdout_evaluator.py` | 학습 후 frozen Red/Blue policy를 별도 seed/scenario grid에서 평가, cross-case diversity penalty 적용 |
-| Scenario Pack | `src/dah_flawless/environment/state_factory.py`, `docs/scenario_pack.md` | clean/degraded/SATCOM/GNSS/C2 metadata/telemetry/low-trust 초기 조건 |
-| Report Generator | `src/dah_flawless/reporting/report_generator.py`, `docs/report_generator.md` | training/holdout summary를 보고서용 Markdown/JSON으로 변환 |
-| Blue Feedback Learner | `src/dah_flawless/blue/feedback_learner.py` | domain/effect trust, sensitivity, threshold 업데이트. effect별 mission-impact EMA, impact 기반 보정, boundary-probe meta goal remap 포함 |
-| Causal Consistency Monitor | `src/dah_flawless/scoring/causal_consistency.py` | attack -> mutation -> tag/effect -> scorer evidence 인과 체인 검사 |
-| Policy Update Reviewer | `src/dah_flawless/policy_review/`, `configs/policy_update_reviewer.json` | 외부 LLM 심사 선택 지원, 실패 시 오프라인 heuristic fallback |
-| LLM Adapter | `src/dah_flawless/llm/` | 역할별 외부 LLM JSON 호출과 순수 코드 fallback 공통 계층 |
-| Blue Defense | `src/dah_flawless/blue/` | observed-only goal consistency, 탐지, 임무위험, 단계방어. `HOLD_COMMAND`는 현재 internal C2 anchor를 우선 사용 |
-| Scorer | `src/dah_flawless/scoring/scorer.py`, `src/dah_flawless/scoring/goal_scorer.py`, `src/dah_flawless/scoring/mission_impact.py` | 승패, goal-aware evidence, mission-impact reward 보정, detection/recovery window |
-| Dashboard | `streamlit_app.py` | raw_world sample 입력, 로그 분석 |
+| **최신 3D 대시보드 (권장)** | `docker compose up frontend` | http://localhost:8080 |
+| 라이브 재실행 콘솔 (백업) | `docker compose up dashboard` | http://localhost:8501 (Streamlit) |
+| CLI 시뮬레이션 1회 | `docker compose run --rm dah` | 로그 파일 출력 |
 
-아직 구현하지 않은 것은 VAE 기반 world generator, 실제 RF/API adapter, 실제 네트워크 공격 실행입니다. 보고서에서는 “확장 가능 설계”로만 설명해야 합니다.
+- `frontend` = 미리 빌드된 리플레이 대시보드(오프라인, 단일 파일).
+- `dashboard` = Streamlit 콘솔. seed/라운드/시나리오를 바꿔 **실제로 다시 시뮬을 돌리고** 라운드별로 그려준다.
+- `dah` = 배치 CLI. `data/logs/`에 JSONL 로그와 요약을 남긴다.
 
-## 빠른 실행
+첫 실행은 이미지 빌드로 몇 분 걸리고, 이후엔 바로 뜬다.
 
-PowerShell 기준:
+---
+
+## 로컬(파이썬)에서 직접 돌리기
+
+전제: Python 3.11+ (개발은 3.12에서 확인).
 
 ```powershell
-cd C:\Users\jisun\Documents\Codex\2026-06-29\sjs\work\DAH_Flawless
+# 저장소 루트에서
 $env:PYTHONPATH='src'
-python -m dah_flawless.main --seed 42 --rounds 5 --reset-logs --out data/logs/round_logs.jsonl --summary data/logs/summary.json
+
+# 기본 5라운드 시뮬레이션
+python -m dah_flawless.main --seed 42 --rounds 5 --reset-logs `
+  --out data/logs/round_logs.jsonl --summary data/logs/summary.json
+
+# 동적 combat 리플레이 + 프론트엔드 JSON 재생성 (대시보드 데이터)
+python -c "from pathlib import Path; from dah_flawless.environment.round_combat_runner import run_combat_rounds; run_combat_rounds(seed=42, rounds=6, max_steps=30, log_path=Path('data/logs/round_logs.jsonl'), summary_path=Path('data/logs/summary.json'), frontend_log_path=Path('data/frontend/combat_replay.json'))"
+
+# Streamlit 대시보드 (로컬)
+streamlit run streamlit_app.py
 ```
 
-보고서 기준 30-step episode로 실행하려면:
+기타 실행 옵션:
 
 ```powershell
-python -m dah_flawless.main --seed 42 --episodes 2 --steps-per-episode 30 --reset-logs --out data/logs/episode_logs.jsonl --summary data/logs/episode_summary.json
-```
+# 30-step 에피소드
+python -m dah_flawless.main --seed 42 --episodes 2 --steps-per-episode 30
 
-실험용 동적 round-level combat episode를 직접 호출하려면:
+# 학습 cadence (Blue-only -> Red-only -> fixed-eval) + holdout 일반화 평가
+python -m dah_flawless.main --seed 42 --training-schedule --steps-per-episode 30 --holdout-eval
 
-```powershell
-$env:PYTHONPATH='src'
-python -c "from dah_flawless.environment.round_combat_runner import run_combat_rounds; logs, summary = run_combat_rounds(seed=42, rounds=3, max_steps=30); print(summary)"
-```
-
-학습/감사용 JSONL과 별도로 프론트엔드 replay JSON을 만들려면:
-
-```powershell
-$env:PYTHONPATH='src'
-python -c "from pathlib import Path; from dah_flawless.environment.round_combat_runner import run_combat_rounds; run_combat_rounds(seed=42, rounds=3, max_steps=30, log_path=Path('data/logs/round_logs.jsonl'), summary_path=Path('data/logs/summary.json'), frontend_log_path=Path('data/frontend/combat_replay.json'))"
-```
-
-이미 생성된 학습 로그를 프론트엔드용으로 변환하려면:
-
-```powershell
-$env:PYTHONPATH='src'
-python scripts/generate_frontend_log.py --logs data/logs/round_logs.jsonl --summary data/logs/summary.json --out data/frontend/combat_replay.json
-```
-
-Blue-only -> Red-only -> fixed-eval 학습 cadence로 실행하려면:
-
-```powershell
-python -m dah_flawless.main --seed 42 --training-schedule --steps-per-episode 30 --reset-logs --out data/logs/training_logs.jsonl --summary data/logs/training_summary.json
-```
-
-학습 후 holdout seed/scenario 평가까지 붙이려면:
-
-```powershell
-python -m dah_flawless.main --seed 42 --training-schedule --steps-per-episode 30 --holdout-eval --reset-logs --out data/logs/training_logs.jsonl --summary data/logs/training_summary.json --holdout-out data/logs/holdout_logs.jsonl --holdout-summary data/logs/holdout_summary.json
-```
-
-학습/holdout 결과를 보고서용 Markdown으로 뽑으려면:
-
-```powershell
-python -m dah_flawless.main --seed 42 --training-schedule --holdout-eval --report-out data/reports/training_holdout_report.md --report-json data/reports/training_holdout_report.json
-```
-
-특정 scenario만 돌리려면:
-
-```powershell
+# 특정 시나리오 (clean_start / degraded_start / satcom_delay / gnss_degraded /
+#                c2_metadata_noisy / telemetry_conflict / low_trust_start)
 python -m dah_flawless.main --seed 42 --rounds 5 --scenario satcom_delay
 ```
 
-장기 run에서 이전 로그 전체 대신 압축된 경향성 memory를 먹이려면:
+프론트엔드를 수정할 경우:
 
 ```powershell
-python -m dah_flawless.main --seed 42 --rounds 50 --memory-compaction-interval 20 --memory-proxy-size 12 --memory-out data/logs/rolling_memory.json
+cd frontend
+npm install
+npm run dev        # 개발 서버
+npm run build      # dist/index.html 단일 번들 재생성 (Docker가 이걸 서빙)
 ```
 
-이 기능은 출력 JSONL 로그를 삭제하지 않는다. Red의 다음 선택에 들어가는 `previous_logs` context만 `proxy_logs + recent_logs`로 줄인다.
-
-큰 시연값을 명시적으로 쓰려면:
-
-```powershell
-python -m dah_flawless.main --seed 42 --rounds 5 --mutation-profile loud_demo
-```
-
-Raw world 샘플부터 시작하려면:
-
-```powershell
-$env:PYTHONPATH='src'
-python scripts/run_world_generator.py --count 1 --out tmp/world/raw_world.jsonl
-python scripts/run_feature_extractor.py --in tmp/world/raw_world.jsonl --out tmp/world/features.jsonl
-python -m dah_flawless.main --seed 42 --rounds 3 --raw-world-sample tmp/world/raw_world.jsonl
-```
-
-대시보드:
-
-```powershell
-$env:PYTHONPATH='src'
-streamlit run streamlit_app.py
-```
+---
 
 ## 테스트
 
@@ -153,103 +131,57 @@ $env:PYTHONPATH='src'
 python -m unittest discover -s tests
 ```
 
-현재 기준으로 `150 tests OK`를 확인했다. 테스트가 확인하는 핵심은 Red/Blue redaction, 공격 3종 E2E, raw_world pipeline, Situation Tagger, Goal Planner, goal diversity guard, Attack-Effect Contract, Blue Defense-Effect Contract, containment score, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, outcome label/reward shaping, attrition cost-effectiveness guard, Blue readiness gate, Blue episode availability budget reset, Blue Goal Consistency Checker, boundary-probe meta goal remap, current internal C2 restore anchor, Effect-aware Blue Feedback Learner, Blue mission-impact feedback, Attack Selector, attack/tactic diversity guard, rolling log memory, dynamic RoundCombatRunner, frontend combat replay log, holdout diversity penalty, policy saturation guard, Scenario Pack, EpisodeRunner, TrainingScheduler, HoldoutEvaluator, Report Generator, Mutation Approval Reviewer fallback, Policy Update Reviewer fallback, LLM Adapter fallback, scorer window, 로그 해시 체인, seed 재현성입니다.
+현재 **185 tests OK**. Red/Blue redaction, 공격 3종 E2E, raw_world 파이프라인, Situation Tagger, Goal Planner·diversity guard, Attack/Blue Defense-Effect Contract, containment, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, Blue readiness gate, ZTA observe/command 게이트, Effect-aware Feedback Learner, telemetry 채널 검사, RoundCombatRunner, frontend replay log, HoldoutEvaluator, LLM/Reviewer fallback, 로그 해시 체인, seed 재현성 등을 검증한다.
 
-## Docker
+---
 
-### 대시보드 (권장, 심사용) — 최신 React 전투 리플레이 콘솔
+## 프로젝트 구조
 
-```bash
-docker compose up frontend
+```text
+src/dah_flawless/
+  world/          raw_world generator·feature extractor·state adapter
+  attacks/        goal planner·attack selector·mutation engine·mutation policy
+  blue/           threat detection·goal consistency·defense·ZTA gate·feedback learner
+  scoring/        scorer·goal scorer·mission impact·causal consistency
+  environment/    round combat runner·episode runner·training scheduler·holdout evaluator
+  reporting/      report generator·frontend_log projection
+  llm/            역할별 외부 LLM 어댑터 + 순수코드 fallback
+frontend/         React 19 + Vite + R3F 3D 대시보드 (dist/index.html 단일 번들)
+streamlit_app.py  라이브 재실행 콘솔 (백업)
+docs/             설계·아키텍처 문서
+tests/            185 tests
 ```
 
-브라우저에서 `http://localhost:8080`을 연다. 랜딩(시작) 화면 → "시뮬레이션 진입" → 3D 전술 대시보드(RED/BLUE 패널, ZTA 정책, 타임라인 리플레이). 미리 빌드된 단일 파일 번들이라 Node·네트워크 없이 바로 뜬다.
-
-### CLI 시뮬레이션
-
-```bash
-docker build -t dah-flawless:local .
-docker run --rm -v "$PWD/data:/app/data" -v "$PWD/tmp:/app/tmp" dah-flawless:local
-```
-
-라운드 수를 바꾸려면:
-
-```bash
-docker run --rm -v "$PWD/data:/app/data" -v "$PWD/tmp:/app/tmp" dah-flawless:local \
-  python -m dah_flawless.main --seed 42 --rounds 100 \
-  --out data/logs/round_logs.jsonl --summary data/logs/summary.json
-```
-
-Compose:
-
-```bash
-docker compose run --rm dah            # CLI 시뮬레이션 1회
-docker compose up frontend             # 최신 대시보드 (localhost:8080)
-docker compose up dashboard            # 백업: Streamlit 콘솔 (localhost:8501, 라이브 재실행용)
-```
-
-`frontend`는 미리 빌드된 리플레이 대시보드(seed 42, 6라운드)를 서빙한다. 커스텀 seed/라운드/시나리오로 **직접 다시 돌리려면** `dashboard`(Streamlit)에서 `data/logs/round_logs.jsonl`을 읽거나 UI에서 새 시뮬레이션을 실행한다.
-
-## 로그에서 볼 것
+주요 로그 필드는 `docs/`와 코드 주석에 상세히 있다. 대표 필드:
 
 | 필드 | 의미 |
 |---|---|
-| `raw_world_source_hash` | raw_world generator sample 해시 |
-| `raw_world_feature_scores` | raw_world에서 뽑힌 공격 후보 점수 |
-| `truth_model` | 현재는 `scorer_truth` |
-| `truth_storage_key` | 현재 호환 키 `state["world"]` |
-| `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지 |
-| `red_policy_state` | Red 공격 weight/probe 상태 |
-| `red_goal` | Red Goal Planner가 선택한 cyber-effect 목표 |
-| `combat_steps` | RoundCombatRunner 실행 시 step별 Red/Blue action, suspicion, budget, 중간 score |
-| `termination_reason` | RoundCombatRunner가 episode를 끝낸 이유. 예: red_abort, red_finalized_detected, max_steps |
-| `frontend_replay.json` | 프론트엔드용 별도 projection. `schema`, `summary`, `filters`, `rounds[].timeline`, `highlights`, `action_runs`만 포함 |
-| `blue_policy_state` | Blue의 domain/effect sensitivity, threshold, trust, feedback count, effect별 mission-impact EMA |
-| `policy_update_review` | Red/Blue 가중치 변동 후보에 대한 reviewer 승인/축소/fallback 근거 |
-| `mutation_approval_review` | Red observe mutation 후보에 대한 approve/clamp/reject/fallback 근거 |
-| `feedback` | scorer 결과를 Red/Blue update에 넘기는 요약. mission-impact score 포함 |
-| `score.goal_success` | Red가 선택한 cyber-effect 목표 달성 여부 |
-| `score.goal_reward` | Red Goal Planner/Feedback Learner에 반영되는 목표별 reward. contract-supported 목표는 mission-impact 보정 포함 |
-| `score.containment_score` | Blue가 완전 복구 전 단계에서 공격 effect를 억제한 정도 |
-| `score.winner_side` | outcome display용 승패 주체. `RED`, `BLUE`, `DRAW` |
-| `score.winner_detail` | outcome display/학습 해석용 세부 결과. `BREACH`, `ATTRITION`, `PARTIAL_BREACH`, `DETECTION`, `RECOVERY`, `NO_EFFECT` 등 |
-| `score.outcome_reason` | 왜 해당 결과 라벨이 붙었는지 설명하는 짧은 reason code |
-| `score.evidence.goal_score` | 목표별 판정 근거. 예: ACK gap, priority drift, channel suppression |
-| `score.evidence.mission_impact` | observe 오염이 임무 판단/안전/명령 freshness/가용성에 미친 영향 점수 |
-| `block`, `episode`, `global_step` | TrainingScheduler/EpisodeRunner 실행 단위 |
-| `scenario_profile` | Scenario Pack이 설정한 강조 조건과 설명 |
-| `holdout_case`, `holdout_seed`, `holdout_scenario` | HoldoutEvaluator 실행 단위와 일반화 평가 조건 |
-| `generalization_flags` | holdout summary에서 낮은 다양성, 낮은 goal success, causal failure 같은 경고 |
-| `log_memory_event` | rolling log memory가 실행된 라운드의 압축 요약과 proxy log 수 |
-| `score.evidence.trusted_value` | scorer_truth 기준값 |
-| `score.evidence.observed_value` | Blue가 받은 값 |
-| `red_situation_tag_details` | Red가 공격 선택 전에 본 상황 태그 근거 |
-| `threat_log.after.effect_hypotheses` | Blue가 observed-only로 추정한 cyber-effect 후보 |
+| `blue_input_redacted` | Blue 입력에서 scorer truth가 제거됐는지(불변식 검증) |
+| `red_policy_state` / `blue_policy_state` | Red/Blue 정책 가중치·민감도·신뢰·피드백 카운트 |
+| `red_goal` / `score.goal_success` / `score.goal_reward` | Red가 고른 cyber-effect 목표와 달성·보상 |
+| `combat_steps` | 스텝별 Red/Blue action·suspicion·budget·중간 score |
+| `score.containment_score` | Blue가 완전 복구 전 단계에서 effect를 억제한 정도 |
+| `score.winner_side` / `winner_detail` | 승패 주체와 세부 결과(BREACH·RECOVERY·CONTAINMENT 등) |
+| `score.evidence.mission_impact` | 오염이 임무 판단/안전/명령 freshness/가용성에 준 영향 |
+| `zta_policy.per_domain` | 도메인별 ZTA 판정과 정답 여부 |
 
-## 문서 읽는 순서
+---
+
+## 구현 범위 (정직한 경계)
+
+**구현됨:** 규칙기반 raw_world 생성, observe mutation 엔진·정책(clamp/reject), Red goal planner·attack selector, Blue 탐지·ZTA 게이트·단계 방어·feedback 학습, goal-aware/mission-impact scorer, 라운드별 정책 coevolution, 학습 스케줄·holdout 일반화 평가, 로그 해시 체인, 3D 리플레이 대시보드.
+
+**아직 아님(다음 단계 설계):** VAE 기반 world generator, 실제 RF/API adapter, 실제 네트워크 공격 실행, 신경망 기반 정책. 외부 LLM 리뷰어는 선택 사항이며 실패 시 오프라인 heuristic으로 fallback한다.
+
+**표현 원칙:** Red는 관측값·시간·순서·메타데이터를 안전하게 변조할 뿐 시스템을 장악하지 않는다. `scorer_truth`는 채점용 정답지이지 Blue 화면이 아니다. 실제 RF/exploit과 학습형 고도화는 "현재 구현"이 아니라 "확장 설계"로 구분해 설명한다.
+
+---
+
+## 문서
+
+설계·용어·아키텍처 상세는 `docs/`에 있다. 읽는 순서:
 
 ```text
-docs/llm_alignment_guide.md
--> docs/world_observed_model.md
--> docs/raw_world_schema.md
--> docs/schema_design.md
--> docs/field_formats.md
--> docs/mutation_policy.md
--> docs/situation_tags.md
--> docs/attack_mapping.md
--> docs/encrypted_channel_attack_ai.md
+docs/llm_alignment_guide.md -> docs/world_observed_model.md -> docs/raw_world_schema.md
+-> docs/mutation_policy.md -> docs/situation_tags.md -> docs/attack_mapping.md
 ```
-
-다른 LLM에게 레포를 맡길 때는 먼저 아래 명령 출력물을 붙여넣습니다.
-
-```powershell
-python scripts/print_llm_alignment_guide.py
-```
-
-## 보고서 표현 원칙
-
-- `raw_world`는 현실 원천 신호, `scorer_truth`는 채점용 기준 상태, `blue_observed`는 AI가 받은 입력이라고 설명합니다.
-- `Scorer/Admin Diff`는 Blue 화면이 아니라 증거/채점 화면이라고 명시합니다.
-- Red는 암호를 깨거나 시스템을 장악하지 않고, `blue_observed`의 값·시간·순서·메타데이터를 안전한 mutation으로 변조한다고 설명합니다.
-- Mutation Approval Reviewer는 reviewer-only로 설명합니다. approve/clamp/reject/explain만 하며, 공격 선택·state 직접 수정·payload 생성 권한은 없습니다.
-- 실제 RF/API adapter와 VAE/RL/LLM 기반 고도화는 현재 구현이 아니라 다음 단계 설계로 구분합니다.
