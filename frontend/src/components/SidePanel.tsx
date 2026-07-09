@@ -12,6 +12,26 @@ export function defenseLabel(a: DefenseAction | string): string {
   return `${a.action}${target} [${a.status}]`;
 }
 
+/**
+ * delta.applied 는 라운드마다 형태가 다르다: mission=평면 숫자({A,B,C}),
+ * telemetry=중첩 객체({command_channel:{...}, telemetry_memory_anchor:{...}}).
+ * 두 형태 모두 {key,value} 리스트로 평탄화한다 (0 제외).
+ */
+export function flattenDelta(applied: Record<string, unknown> | null | undefined): { key: string; value: number }[] {
+  if (!applied) return [];
+  const out: { key: string; value: number }[] = [];
+  for (const [k, v] of Object.entries(applied)) {
+    if (typeof v === "number") {
+      if (v !== 0) out.push({ key: k, value: v });
+    } else if (v && typeof v === "object") {
+      for (const [ik, iv] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof iv === "number" && iv !== 0) out.push({ key: `${k}.${ik}`, value: iv });
+      }
+    }
+  }
+  return out;
+}
+
 const SPRING = { type: "spring", stiffness: 300, damping: 32 } as const;
 
 const W_RAIL = 56;
@@ -136,21 +156,28 @@ function RedContent({ step, expanded }: { step: TimelineStep | null; expanded: b
             <>
               <section className="space-y-1.5">
                 <Label>Applied Delta</Label>
-                {!step.delta?.applied || Object.keys(step.delta.applied).length === 0 ? (
-                  <p className="font-mono text-[11px] text-text-low">no mutation this step</p>
-                ) : (
-                <ul className="space-y-0.5">
-                  {Object.entries(step.delta.applied).map(([k, v]) => (
-                    <li key={k} className="flex justify-between font-mono text-[11px]">
-                      <span className="text-text-low">{k}</span>
-                      <span className={v > 0 ? "text-red-ops" : v < 0 ? "text-blue-def" : "text-text-mid"}>
-                        {v > 0 ? "+" : ""}
-                        {v.toFixed(4)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                )}
+                {(() => {
+                  const entries = flattenDelta(step.delta?.applied);
+                  return entries.length === 0 ? (
+                    <p className="font-mono text-[11px] text-text-low">no mutation this step</p>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {entries.map(({ key, value }) => (
+                        <li key={key} className="flex justify-between gap-2 font-mono text-[11px]">
+                          <span className="truncate text-text-low">{key}</span>
+                          <span
+                            className={
+                              value > 0 ? "text-red-ops" : value < 0 ? "text-blue-def" : "text-text-mid"
+                            }
+                          >
+                            {value > 0 ? "+" : ""}
+                            {value.toFixed(4)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()}
               </section>
 
               <section className="space-y-1.5">
