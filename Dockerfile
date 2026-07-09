@@ -12,8 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY configs ./configs
 COPY scripts ./scripts
 COPY src ./src
-COPY tests ./tests
-COPY docs ./docs
 COPY streamlit_app.py ./
 
 # Pre-built React dashboard (single-file bundle, served as static asset — no Node needed at runtime).

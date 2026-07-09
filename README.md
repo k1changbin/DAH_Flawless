@@ -149,20 +149,6 @@ npm run dev        # 개발 서버
 npm run build      # dist/index.html 단일 번들 재생성 (Docker가 이걸 서빙)
 ```
 
----
-
-## 테스트
-
-```powershell
-$env:PYTHONDONTWRITEBYTECODE='1'
-$env:PYTHONPATH='src'
-python -m unittest discover -s tests
-```
-
-현재 **185 tests OK**. Red/Blue redaction, 공격 3종 E2E, raw_world 파이프라인, Situation Tagger, Goal Planner·diversity guard, Attack/Blue Defense-Effect Contract, containment, Causal Consistency Monitor, Goal-aware/Mission-impact Scorer, Blue readiness gate, ZTA observe/command 게이트, Effect-aware Feedback Learner, telemetry 채널 검사, RoundCombatRunner, frontend replay log, HoldoutEvaluator, LLM/Reviewer fallback, 로그 해시 체인, seed 재현성 등을 검증한다.
-
----
-
 ## 프로젝트 구조
 
 ```text
@@ -176,11 +162,9 @@ src/dah_flawless/
   llm/            역할별 외부 LLM 어댑터 + 순수코드 fallback
 frontend/         React 19 + Vite + R3F 3D 대시보드 (dist/index.html 단일 번들)
 streamlit_app.py  라이브 재실행 콘솔 (백업)
-docs/             설계·아키텍처 문서
-tests/            185 tests
 ```
 
-주요 로그 필드는 `docs/`와 코드 주석에 상세히 있다. 대표 필드:
+주요 로그 필드 대표:
 
 | 필드 | 의미 |
 |---|---|
@@ -202,14 +186,3 @@ tests/            185 tests
 **아직 아님(다음 단계 설계):** VAE 기반 world generator, 실제 RF/API adapter, 실제 네트워크 공격 실행, 신경망 기반 정책. 외부 LLM 리뷰어는 선택 사항이며 실패 시 오프라인 heuristic으로 fallback한다.
 
 **표현 원칙:** Red는 관측값·시간·순서·메타데이터를 안전하게 변조할 뿐 시스템을 장악하지 않는다. `scorer_truth`는 채점용 정답지이지 Blue 화면이 아니다. 실제 RF/exploit과 학습형 고도화는 "현재 구현"이 아니라 "확장 설계"로 구분해 설명한다.
-
----
-
-## 문서
-
-설계·용어·아키텍처 상세는 `docs/`에 있다. 읽는 순서:
-
-```text
-docs/llm_alignment_guide.md -> docs/world_observed_model.md -> docs/raw_world_schema.md
--> docs/mutation_policy.md -> docs/situation_tags.md -> docs/attack_mapping.md
-```

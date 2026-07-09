@@ -45,7 +45,7 @@ SCRIPTED_ATTACKS = (
     "TIME_DESYNC_REPLAY",
 )
 
-# Scenario types (README section 3 / docs/HANDOFF.md).
+# Scenario types used by the simulator and replay selectors.
 SCENARIOS = (
     "clean_start",
     "degraded_start",
