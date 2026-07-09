@@ -365,7 +365,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
           data-side={side}
           onClick={() => toggleFocus(side)}
           aria-label={`${title} sheet open`}
-          className={`fixed top-20 z-30 flex h-32 w-10 flex-col items-center justify-center gap-2 border bg-black/30 shadow-[0_18px_48px_rgba(0,0,0,0.35)] backdrop-blur-xl ${
+          className={`fixed top-20 z-30 flex h-32 w-10 flex-col items-center justify-center gap-2 border bg-black/30 shadow-[0_18px_48px_rgba(0,0,0,0.35)] backdrop-blur-md ${
             isRed
               ? "left-2 border-red-dim text-red-ops"
               : "right-2 border-blue-dim text-blue-def"
@@ -395,7 +395,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
         transition={SPRING}
       >
         <div className={`hud-clip h-full p-px ${isRed ? "bg-red-ops" : "bg-blue-def"}`}>
-          <div className="hud-clip hud-glass flex h-full flex-col backdrop-blur-xl">
+          <div className="hud-clip hud-glass flex h-full flex-col backdrop-blur-md">
             <button
               onClick={() => toggleFocus(side)}
               aria-expanded
@@ -434,7 +434,7 @@ export function SidePanel({ side }: { side: "RED" | "BLUE" }) {
       data-accent={accent}
     >
       <div className={`hud-clip h-full p-px transition-colors duration-300 ${strokeCls}`}>
-        <div className="hud-clip hud-glass flex h-full w-full flex-col backdrop-blur-xl">
+        <div className="hud-clip hud-glass flex h-full w-full flex-col backdrop-blur-md">
           <AnimatePresence mode="popLayout" initial={false}>
             {isRail ? (
               /* 레일 모드: 클릭하면 이 진영으로 포커스 전환 */

@@ -50,7 +50,7 @@ export function HudFrame({
           vectorEffect="non-scaling-stroke"
         />
       </svg>
-      <div className={`hud-clip hud-glass flex h-full w-full flex-col backdrop-blur-xl ${bodyClassName}`}>
+      <div className={`hud-clip hud-glass flex h-full w-full flex-col backdrop-blur-md ${bodyClassName}`}>
         {title && (
           <header className="flex shrink-0 items-center justify-between border-b border-white/12 bg-black/16 px-3 py-2">
             <h2

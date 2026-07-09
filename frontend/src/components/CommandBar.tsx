@@ -25,7 +25,7 @@ export function CommandBar() {
   const side = round.outcome.winner_side;
 
   return (
-    <header className="dashboard-bar relative z-10 flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-white/14 px-4 py-2 backdrop-blur-xl lg:flex-nowrap lg:gap-4 lg:py-0 max-[1023px]:px-2">
+    <header className="dashboard-bar relative z-10 flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-white/14 px-4 py-2 backdrop-blur-md lg:flex-nowrap lg:gap-4 lg:py-0 max-[1023px]:px-2">
       <button
         onClick={exitToLanding}
         className="flex min-w-fit items-baseline gap-2 transition-opacity hover:opacity-80 active:scale-[0.98]"

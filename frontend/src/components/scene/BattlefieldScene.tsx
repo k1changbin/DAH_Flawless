@@ -450,6 +450,8 @@ export function BattlefieldScene() {
       camera={{ position: [5.5, 4.6, 7.5], fov: 42 }}
       gl={{ antialias: false, alpha: true, preserveDrawingBuffer: true, powerPreference: "high-performance" }}
       performance={{ min: 0.5 }}
+      // 사이드 패널 width 스프링 중 매 프레임 WebGL 버퍼 재할당 방지 (패널 전환 렉 해소)
+      resize={{ debounce: 200 }}
       style={{ background: "transparent" }}
     >
       <SceneContent />
