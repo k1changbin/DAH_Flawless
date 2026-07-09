@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/flawless-ai-logo.jpg" alt="Flawless AI logo" width="520">
+</p>
+
 # DAH Flawless — Red/Blue 사이버 AI 시뮬레이션
 
 UAV·UGV·위성통신(SATCOM) 환경을 안전하게 추상화한 시뮬레이션 안에서 **Red AI가 Blue의 관측 입력을 오염**시키고 **Blue AI가 그 모순을 탐지·격리·복구**하는 적대적 공방을 재현한다. 실제 침투 도구가 아니라, "관측을 믿을 수 있는가(observe-integrity)"라는 문제를 AI 대 AI로 증명하는 연구용 시뮬레이터다.
@@ -49,6 +53,28 @@ docker compose down
 ```
 
 > 대시보드는 실제 백엔드 시뮬레이션 결과를 **재현 가능한 리플레이**로 시각화한다. `seed=42`, `clean_start`는 로컬에서 2000R까지 생성해 긴 학습 흐름을 볼 수 있고, 다른 seed/scenario는 가벼운 샘플 리플레이로 동작한다.
+
+---
+
+## 화면 예시
+
+프론트엔드 replay console의 초기 화면입니다. Seed, Scenario, Requested Rounds, Loaded Rounds를 확인하고 시뮬레이션 replay로 진입할 수 있습니다
+
+<p align="center">
+  <img src="docs/images/frontend-start-screen.png" alt="DAH Flawless frontend start screen" width="900">
+</p>
+
+특정 라운드의 step 단위 진행 화면입니다. 현재 step, 선택된 attack vector, goal, suspicion score, ZTA policy decision, event log, timeline을 한 화면에서 확인합니다.
+
+<p align="center">
+  <img src="docs/images/round-visualization.png" alt="DAH Flawless round visualization dashboard" width="900">
+</p>
+
+2000라운드 실행 결과를 집계한 화면입니다. 승패 분포, 누적 lead curve, 라운드 밀도, 공격 선택 분포, 목표 선택 분포, 정책 decision 분포를 검토할 수 있습니다.
+
+<p align="center">
+  <img src="docs/images/round-2000-distribution.png" alt="DAH Flawless 2000 round distribution board" width="900">
+</p>
 
 ---
 
