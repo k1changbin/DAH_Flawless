@@ -446,9 +446,11 @@ export function BattlefieldScene() {
 
   return (
     <Canvas
-      dpr={[1, 1]}
+      // 네이티브 해상도(최대 2x)로 선명하게. 부하 시 performance.min이 자동으로 낮춤.
+      dpr={[1, 2]}
       camera={{ position: [5.5, 4.6, 7.5], fov: 42 }}
-      gl={{ antialias: false, alpha: true, preserveDrawingBuffer: true, powerPreference: "high-performance" }}
+      // antialias: 와이어프레임 엣지 계단현상 제거 (화질 핵심)
+      gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: "high-performance" }}
       performance={{ min: 0.5 }}
       // 사이드 패널 width 스프링 중 매 프레임 WebGL 버퍼 재할당 방지 (패널 전환 렉 해소)
       resize={{ debounce: 200 }}

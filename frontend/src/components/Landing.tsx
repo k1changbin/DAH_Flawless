@@ -144,7 +144,9 @@ export function Landing() {
                           Mission telemetry split
                         </p>
                         <p className="mt-2 text-2xl font-semibold leading-tight text-white">
-                          월드값 기반 송출/수신 흐름을 분리해서 보여줍니다.
+                          월드값 기반 송출/수신 흐름을
+                          <br />
+                          분리해서 보여줍니다.
                         </p>
                       </div>
 
