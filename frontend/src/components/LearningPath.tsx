@@ -135,8 +135,13 @@ export function LearningPath({ runId, roundIdx, onSelectRound }: LearningPathPro
               className="h-full w-12 bg-transparent pr-1 font-mono text-[11px] text-text-hi outline-none"
             />
           </form>
-          <div className="border border-hud-active/40 bg-hud-active/10 px-2 py-1 font-display text-[10px] font-semibold uppercase text-hud-active">
-            {profile.phase}
+          {/* phase 라벨은 재생 중 RED PRESSURE↔BLUE MOMENTUM 등으로 폭이 변한다.
+              가장 긴 라벨을 invisible 고스트로 겹쳐 폭을 상수 고정 → 옆 입력창이 흔들리지 않는다. */}
+          <div className="inline-grid place-items-center border border-hud-active/40 bg-hud-active/10 px-2 py-1 font-display text-[10px] font-semibold uppercase text-hud-active">
+            <span aria-hidden className="invisible col-start-1 row-start-1 whitespace-nowrap">
+              BLUE MOMENTUM
+            </span>
+            <span className="col-start-1 row-start-1 whitespace-nowrap">{profile.phase}</span>
           </div>
         </div>
       </div>

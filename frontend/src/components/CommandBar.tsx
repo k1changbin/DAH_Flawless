@@ -100,20 +100,31 @@ export function CommandBar() {
         결과보기
       </button>
 
-      <div className="font-mono text-xs text-text-mid max-[1023px]:order-5 max-[1023px]:w-full">
+      {/* 배속 재생 중 폭이 변해 컨트롤을 밀어내지 않도록 숫자는 tabular-nums,
+          phase(mono)는 최장 8자분(min-w-[8ch]) 슬롯으로 폭을 상수 고정한다. */}
+      <div className="whitespace-nowrap font-mono text-xs tabular-nums text-text-mid max-[1023px]:order-5 max-[1023px]:w-full">
         STEP{" "}
         <span className="text-base text-text-hi">
           {String(step?.step ?? 0).padStart(2, "0")}
         </span>
         <span className="text-text-low"> / {String(total).padStart(2, "0")}</span>
-        {step && <span className="ml-3 uppercase text-text-low">{step.phase}</span>}
+        <span className="ml-3 inline-block min-w-[8ch] uppercase text-text-low">
+          {step?.phase ?? ""}
+        </span>
       </div>
 
+      {/* 배지 폭이 라운드마다 바뀌면 컨트롤이 흔들리므로, 가장 긴 조합
+          (BLUE · PARTIAL_CONTAINMENT)을 invisible 고스트로 겹쳐 폭을 상수 고정한다. */}
       <div
-        className={`hud-clip border px-3 py-1.5 font-display text-xs font-semibold uppercase tracking-[0.08em] ${WINNER_STYLE[side]}`}
+        className={`hud-clip inline-grid place-items-center border px-3 py-1.5 font-display text-xs font-semibold uppercase tracking-[0.08em] ${WINNER_STYLE[side]}`}
         title={round.outcome.reason}
       >
-        {side} · {round.outcome.winner_detail}
+        <span aria-hidden className="invisible col-start-1 row-start-1 whitespace-nowrap">
+          BLUE · PARTIAL_CONTAINMENT
+        </span>
+        <span className="col-start-1 row-start-1 whitespace-nowrap">
+          {side} · {round.outcome.winner_detail}
+        </span>
       </div>
 
       <button
